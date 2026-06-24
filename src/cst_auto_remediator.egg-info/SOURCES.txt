@@ -15,4 +15,5 @@ src/cst_auto_remediator.egg-info/requires.txt
 src/cst_auto_remediator.egg-info/top_level.txt
 tests/test_classify.py
 tests/test_fixtures.py
+tests/test_ingest.py
 tests/test_validate.py

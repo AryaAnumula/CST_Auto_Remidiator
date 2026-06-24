@@ -21,6 +21,18 @@ MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
 MAX_ALIAS_COUNT = 10
 
 
+def detect_line_ending(raw_bytes: bytes) -> str:
+    """Detect the dominant line-ending convention from raw file bytes."""
+    if b"\r\n" in raw_bytes:
+        return "\r\n"
+    return "\n"
+
+
+def read_source_text(raw_bytes: bytes) -> str:
+    """Decode UTF-8 source text without normalizing line endings."""
+    return raw_bytes.decode("utf-8")
+
+
 def _make_yaml() -> YAML:
     yaml = YAML(typ="rt")
     yaml.preserve_quotes = True
@@ -42,9 +54,10 @@ def ingest(path: str | Path) -> IngestResult:
         )
 
     sha256 = hashlib.sha256(raw_bytes).hexdigest()
+    line_ending = detect_line_ending(raw_bytes)
 
     try:
-        text = raw_bytes.decode("utf-8")
+        source_text = read_source_text(raw_bytes)
     except UnicodeDecodeError:
         return IngestFailure(
             metadata=FileMetadata(
@@ -52,6 +65,7 @@ def ingest(path: str | Path) -> IngestResult:
                 size=len(raw_bytes),
                 sha256=sha256,
                 encoding="invalid",
+                line_ending=line_ending,
             ),
             reason=ReasonCode.INVALID_ENCODING,
         )
@@ -61,11 +75,12 @@ def ingest(path: str | Path) -> IngestResult:
         size=len(raw_bytes),
         sha256=sha256,
         encoding="utf-8",
+        line_ending=line_ending,
     )
 
     yaml = _make_yaml()
     try:
-        document = yaml.load(StringIO(text))
+        document = yaml.load(StringIO(source_text))
     except YAMLError as exc:
         if "alias" in str(exc).lower():
             return IngestFailure(metadata=metadata, reason=ReasonCode.YAML_BOMB)
@@ -74,7 +89,7 @@ def ingest(path: str | Path) -> IngestResult:
     if document is None:
         return IngestFailure(metadata=metadata, reason=ReasonCode.PARSE_ERROR)
 
-    return IngestSuccess(document=document, metadata=metadata)
+    return IngestSuccess(document=document, metadata=metadata, source_text=source_text)
 
 
 def _metadata(file_path: Path, raw_bytes: bytes) -> FileMetadata:
@@ -83,6 +98,7 @@ def _metadata(file_path: Path, raw_bytes: bytes) -> FileMetadata:
         size=len(raw_bytes),
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
         encoding="utf-8",
+        line_ending=detect_line_ending(raw_bytes),
     )
 
 

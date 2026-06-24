@@ -102,12 +102,6 @@ def serialize_document(document: CommentedMap) -> str:
     return stream.getvalue()
 
 
-def detect_line_ending(text: str) -> str:
-    if "\r\n" in text:
-        return "\r\n"
-    return "\n"
-
-
 def find_run_line_indices(text: str, expression_text: str) -> set[int]:
     """Locate 0-based line indices whose ``run:`` line contains *expression_text*."""
     indices: set[int] = set()
@@ -120,12 +114,13 @@ def find_run_line_indices(text: str, expression_text: str) -> set[int]:
 def build_patched_text(
     original_text: str,
     patches: list[PlannedPatch],
+    line_ending: str,
 ) -> tuple[str, set[int], set[int]]:
     """
     Apply patches to *original_text* while preserving untouched bytes.
 
     Inserts ``env:`` immediately before the patched ``run:`` line and replaces
-    only each ``${{ ... }}`` span on that line.
+    only each ``${{ ... }}`` span on that line. New lines use *line_ending*.
     """
     lines = original_text.splitlines(keepends=True)
     if not lines and original_text:
@@ -160,10 +155,10 @@ def build_patched_text(
                 + new_run_line[position + len(expr) :]
             )
 
-        env_lines = [f"{indent}env:\n"]
+        env_lines = [f"{indent}env:{line_ending}"]
         for patch in step_patches:
             env_lines.append(
-                f"{indent}  {patch.env_var_name}: {patch.site.expression_text}\n"
+                f"{indent}  {patch.env_var_name}: {patch.site.expression_text}{line_ending}"
             )
 
         lines[run_idx : run_idx + 1] = env_lines + [new_run_line]

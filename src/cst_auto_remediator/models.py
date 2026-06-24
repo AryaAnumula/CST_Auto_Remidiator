@@ -56,6 +56,7 @@ class FileMetadata:
     size: int
     sha256: str
     encoding: str
+    line_ending: str
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class ExpressionSite:
 class IngestSuccess:
     document: Any
     metadata: FileMetadata
+    source_text: str
 
 
 @dataclass
@@ -99,6 +101,8 @@ class ReportEntry:
     expression_text: str | None = None
     classification: Classification | None = None
     scalar_type: ScalarType | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +116,8 @@ class ReportEntry:
             "expression_text": self.expression_text,
             "classification": self.classification.value if self.classification else None,
             "scalar_type": self.scalar_type.value if self.scalar_type else None,
+            "start_offset": self.start_offset,
+            "end_offset": self.end_offset,
         }
 
 

@@ -9,6 +9,7 @@ from ruamel.yaml.comments import CommentedMap
 from cst_auto_remediator.ingest import ingest
 from cst_auto_remediator.models import (
     Action,
+    ExpressionSite,
     IngestFailure,
     PlannedPatch,
     ReportEntry,
@@ -45,7 +46,8 @@ def remediate_file(path: str | Path) -> tuple[str | None, list[dict]]:
         ]
 
     document = ingest_result.document
-    original_text = file_path.read_text(encoding="utf-8")
+    metadata = ingest_result.metadata
+    original_text = ingest_result.source_text
 
     sites = traverse_jobs(document)
     if not sites:
@@ -74,7 +76,11 @@ def remediate_file(path: str | Path) -> tuple[str | None, list[dict]]:
     apply_patches(document, patches)
     _ = serialize_document(document)
 
-    output_text, input_run_lines, output_excluded = build_patched_text(original_text, patches)
+    output_text, input_run_lines, output_excluded = build_patched_text(
+        original_text,
+        patches,
+        metadata.line_ending,
+    )
     assert_byte_preservation(original_text, output_text, input_run_lines, output_excluded)
 
     return output_text, [entry.to_dict() for entry in report_entries]
@@ -87,7 +93,7 @@ def _report_file_path(file_path: Path) -> str:
         return file_path.as_posix()
 
 
-def _get_step(document: CommentedMap, site) -> CommentedMap | None:
+def _get_step(document: CommentedMap, site: ExpressionSite) -> CommentedMap | None:
     jobs = document.get("jobs")
     if not isinstance(jobs, CommentedMap):
         return None
@@ -105,7 +111,11 @@ def _get_step(document: CommentedMap, site) -> CommentedMap | None:
     return step
 
 
-def _report_entry(file_path: Path, site, result: ValidationResult) -> ReportEntry:
+def _report_entry(
+    file_path: Path,
+    site: ExpressionSite,
+    result: ValidationResult,
+) -> ReportEntry:
     return ReportEntry(
         file=_report_file_path(file_path),
         job_id=site.job_id,
@@ -117,4 +127,6 @@ def _report_entry(file_path: Path, site, result: ValidationResult) -> ReportEntr
         expression_text=site.expression_text,
         classification=site.classification,
         scalar_type=site.scalar_type,
+        start_offset=site.start_offset,
+        end_offset=site.end_offset,
     )

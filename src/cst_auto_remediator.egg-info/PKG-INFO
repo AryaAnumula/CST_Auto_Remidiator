@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: cst-auto-remediator
+Version: 0.1.0
+Summary: Deterministic CST-based auto-remediation for GitHub Actions command injection
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: ruamel.yaml<0.19,>=0.18
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+
+# CST Auto Remediator
+
+Deterministic, CST-based auto-remediation for command injection in GitHub Actions workflow YAML.

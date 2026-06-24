@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cst-auto-remediator"
+version = "0.1.0"
+description = "Deterministic CST-based auto-remediation for GitHub Actions command injection"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ruamel.yaml>=0.18,<0.19",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

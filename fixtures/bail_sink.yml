@@ -1,0 +1,8 @@
+name: bail sink
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Eval sink
+        run: eval "echo ${{ github.event.issue.title }}"

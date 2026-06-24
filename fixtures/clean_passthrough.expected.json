@@ -1,0 +1,14 @@
+[
+  {
+    "file": "fixtures/clean_passthrough.yml",
+    "job_id": "test",
+    "step": 0,
+    "step_id": null,
+    "action": "PATCHED",
+    "reason": null,
+    "env_var_added": "ISSUE_TITLE",
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain"
+  }
+]

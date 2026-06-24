@@ -1,4 +1,11 @@
-"""Shared data types and reason-code enums."""
+"""
+Shared data types and reason-code enums.
+
+All structured report reasons, classification labels, and dataclasses live here
+so every stage imports the same fixed vocabulary.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,10 @@
-"""Generate verified offsets and expected outputs for all fixtures."""
+"""
+Regenerate fixtures/*.expected.json and .expected.yml after intentional output changes.
+
+Also verifies that run_value[start:end] == expression_text for every site.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

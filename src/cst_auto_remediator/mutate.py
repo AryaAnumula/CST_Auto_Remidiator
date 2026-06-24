@@ -1,4 +1,11 @@
-"""Stage 3 — CST-aware mutation and round-trip serialization."""
+"""
+Stage 3 — CST-aware mutation and byte-preserving output assembly.
+
+apply_patches() edits the ruamel CST; build_patched_text() writes the final YAML
+string while preserving untouched lines and the original line-ending convention.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,11 @@
-"""Stage 2 — deterministic expression taint classification."""
+"""
+Stage 2 — deterministic expression taint classification.
+
+Pure functions only: find ${{ ... }} spans and classify expression bodies.
+No YAML traversal — see traverse.py for orchestration.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

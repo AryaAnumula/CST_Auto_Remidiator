@@ -1,4 +1,10 @@
-"""Pipeline orchestration for Stages 1–3."""
+"""
+Pipeline orchestration for Stages 1–3.
+
+Entry point: remediate_file(path) -> (yaml_string | None, report[]).
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

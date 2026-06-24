@@ -1,4 +1,11 @@
-"""Stage 3 — deterministic validation rule chain."""
+"""
+Stage 3 — deterministic validation rule chain.
+
+Decides PATCHED / SKIPPED / BAILED per ExpressionSite (sinks, collisions, scope).
+Does not mutate files — see mutate.py.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

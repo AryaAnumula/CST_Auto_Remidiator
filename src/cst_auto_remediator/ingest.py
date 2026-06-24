@@ -1,4 +1,11 @@
-"""Stage 1 — file ingestion and round-trip YAML parsing."""
+"""
+Stage 1 — file ingestion and round-trip YAML parsing.
+
+Reads raw bytes, records audit metadata (SHA-256, line endings), and parses with
+ruamel.yaml in round-trip mode. Failures return structured ReasonCode values.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

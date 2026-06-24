@@ -1,4 +1,11 @@
-"""Stage 2 — depth-first traversal to locate expression sites."""
+"""
+Stage 2 — depth-first traversal to locate expression sites.
+
+Walks jobs.<job_id>.steps[].run and builds ExpressionSite objects by delegating
+scan/classify work to classify.py.
+
+MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
+"""
 
 from __future__ import annotations
 

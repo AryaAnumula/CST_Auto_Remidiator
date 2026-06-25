@@ -38,6 +38,7 @@ class ReasonCode(str, Enum):
     TRUSTED = "TRUSTED"
     AMBIGUOUS_EXPRESSION = "AMBIGUOUS_EXPRESSION"
     SINGLE_QUOTED_EXPRESSION = "SINGLE_QUOTED_EXPRESSION"
+    ALREADY_REMEDIATED = "ALREADY_REMEDIATED"
 
 
 class Classification(str, Enum):
@@ -133,12 +134,14 @@ class ValidationResult:
     action: Action
     reason: ReasonCode | None = None
     env_var_name: str | None = None
+    insert_env: bool = True
 
 
 @dataclass
 class PlannedPatch:
     site: ExpressionSite
     env_var_name: str
+    insert_env: bool = True
 
 
 @dataclass

@@ -1,0 +1,21 @@
+# Partial remediation: env already binds the expression but run still embeds ${{ ... }}.
+# Expected: run-only patch (replace expression with $PR_TITLE, do not duplicate env block).
+name: Partial env binding
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Half-fixed notifier
+        env:
+          PR_TITLE: ${{ github.event.issue.title }}
+        run: 'echo "Issue: ${{ github.event.issue.title }}"'
+
+      - name: Fully fixed notifier
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: 'echo "Issue: $ISSUE_TITLE"'

@@ -54,19 +54,29 @@ CST_Auto_Remidiator/
 │   ├── test_classify.py      ← Unit tests for classification
 │   ├── test_validate.py      ← Unit tests for validation rules
 │   ├── test_ingest.py        ← Stage 1 / line-ending tests
-│   └── test_fixtures.py      ← Integration tests over fixtures/
+│   ├── test_fixtures.py      ← Integration tests over fixtures/
+│   └── test_already_remediated.py ← Already-remediated + testing/ scenarios
+│
+├── testing/                  ← Complex integration scenarios (see testing/README.md)
+│   ├── inputs/               ← Scenario YAML inputs
+│   ├── expected/             ← Expected report + YAML oracle files
+│   ├── output/               ← Latest run_scenarios.py outputs (for manual review)
+│   └── run_scenarios.py      ← Regenerate testing/output/
 │
 ├── fixtures/                 ← Minimal YAML scenarios + expected outputs
 │   ├── *.yml                 ← Input workflows
+│   ├── clean_passthrough2.yml ← Already-remediated workflow (verify_diff2.py)
 │   ├── *.expected.json       ← Expected report entries (incl. start/end offsets)
 │   └── *.expected.yml        ← Expected patched YAML (where applicable)
 │
 ├── scripts/
-│   └── regenerate_expected.py  ← Regenerate .expected.* after intentional output changes
+│   └── regenerate_expected.py  ← Regenerate fixtures/.expected.* after changes
 │
 ├── verify_basic.py           ← Manual check: report, offsets, line endings
-├── verify_diff.py            ← Manual check: unified diff (content-only lines)
-└── verify_output.yml         ← Ephemeral output from verify_diff.py (not committed target)
+├── verify_diff.py            ← Manual diff: vulnerable fixture (expects changes)
+├── verify_diff2.py           ← Manual diff: already-remediated fixture (expects NO diff)
+├── verify_output.yml         ← Ephemeral output from verify_diff.py
+└── verify_output2.yml        ← Ephemeral output from verify_diff2.py
 ```
 
 ---
@@ -181,11 +191,16 @@ original line endings for Stage 3 output assembly.
 
 **Role:** Walk parsed CST and build `ExpressionSite` list. Calls `classify.py`; does not validate or mutate.
 
-**Traversal scope (current):** `jobs.<job_id>.steps[].run` only.  
-Out of scope: job-level `run:`, reusable workflows, composite actions.
+**Traversal scope (current):** `jobs.<job_id>.steps[].run` for mutation candidates;  
+`jobs.<job_id>.steps[].env` is scanned by `traverse_env_bindings()` for **audit only**
+(already-remediated detection).
 
 **Block scalar detection:** `LiteralScalarString` / `FoldedScalarString` → `ScalarType.BLOCK`.
 Expressions inside block scalars are still **scanned and reported**; Stage 3 skips them.
+
+**Already-remediated detection:** When `env:` binds an UNTRUSTED `${{ ... }}` and `run:`
+references `$VAR` without embedding the same expression, the pipeline reports
+`SKIPPED` / `ALREADY_REMEDIATED` and leaves the file byte-identical.
 
 ---
 
@@ -200,9 +215,10 @@ Expressions inside block scalars are still **scanned and reported**; Stage 3 ski
 3. AMBIGUOUS → `SKIPPED` / `AMBIGUOUS_EXPRESSION`
 4. Sink detection → `BAILED` (`SINK_EVAL`, `SINK_BASH_C`, `SINK_SH_C`, `SINK_COMMAND_SUBSTITUTION`)
 5. Single-quoted expression → `SKIPPED` / `SINGLE_QUOTED_EXPRESSION`
-6. Existing env key collision (case-insensitive) → `BAILED` / `ENV_NAME_COLLISION`
-7. Two expressions same generated name in one step → `BAILED` / `GENERATED_NAME_COLLISION`
-8. Otherwise → `PATCHED` + `env_var_name` from `generate_env_var_name()`
+6. Env already binds same `${{ ... }}` value → `PATCHED` **run-only** (`insert_env=False`)
+7. Existing env key collision (different value) → `BAILED` / `ENV_NAME_COLLISION`
+8. Two expressions same generated name in one step → `BAILED` / `GENERATED_NAME_COLLISION`
+9. Otherwise → `PATCHED` + new `env:` block (`insert_env=True`)
 
 **Sink notes:** `\beval\b`, `\bbash\s+-c\b`, `\bsh\s+-c\b` only (not `/bin/bash -c` yet).
 `$(...)` and backticks bail only when the **expression span** lies inside that region.
@@ -232,12 +248,13 @@ drive *what* changes; `build_patched_text` drives *how* the file bytes are assem
 **Role:** `remediate_file(path) -> (yaml_out | None, report[])`
 
 1. `ingest()` — bail early on Stage 1 failure
-2. `traverse_jobs()` — collect sites
-3. For each site: `validate_site()` → build `ReportEntry` (includes offsets)
-4. Collect `PlannedPatch` for PATCHED sites
-5. If patches: `apply_patches` + `build_patched_text(source_text, line_ending)`
-6. `assert_byte_preservation`
-7. Return unchanged `source_text` if no patches needed
+2. `traverse_jobs()` — collect run expression sites
+3. `traverse_env_bindings()` — detect already-remediated steps (report only)
+4. For each run site: `validate_site()` → build `ReportEntry` (includes offsets)
+5. Collect `PlannedPatch` for PATCHED sites (may be run-only if env already binds expr)
+6. If patches: `apply_patches` + `build_patched_text(source_text, line_ending)`
+7. `assert_byte_preservation`
+8. Return unchanged `source_text` if no patches needed
 
 ---
 
@@ -250,8 +267,18 @@ drive *what* changes; `build_patched_text` drives *how* the file bytes are assem
 | `bail_collision.yml` | BAILED / ENV_NAME_COLLISION | Pre-existing `ISSUE_TITLE` env key |
 | `block_scalar_flagged.yml` | SKIPPED / BLOCK_SCALAR_OUT_OF_SCOPE | `run: \|` — detected, not mutated |
 | `crlf_preservation.yml` | PATCHED | File saved with `\r\n`; guards line-ending regression |
+| `clean_passthrough2.yml` | SKIPPED / ALREADY_REMEDIATED | Already-fixed workflow; must pass through unchanged |
 
 Each fixture has `*.expected.json`. Patched fixtures also have `*.expected.yml`.
+
+### `testing/` scenarios (complex integration)
+
+| Input | Purpose |
+|-------|---------|
+| `multi_step_mixed.yml` | Mixed: already-remediated + vulnerable + block + eval sink in one file |
+| `partial_env_run_only.yml` | Env binds expression but run still has `${{ ... }}` — run-only patch |
+
+Run: `python testing/run_scenarios.py` → writes `testing/output/` for manual review.
 
 **Offset reference (run_value slice verification):**
 
@@ -274,6 +301,8 @@ pip install -e ".[dev]"
 pytest tests -v
 python verify_basic.py
 python verify_diff.py
+python verify_diff2.py
+python testing/run_scenarios.py
 ```
 
 After changing expected outputs intentionally:
@@ -303,6 +332,8 @@ python scripts/regenerate_expected.py
 | 2026-06-24 | Fixed report offsets (`start_offset`/`end_offset` threaded through `ReportEntry`) |
 | 2026-06-24 | Fixed CRLF preservation via `FileMetadata.line_ending` + `build_patched_text` |
 | 2026-06-24 | Added `crlf_preservation` fixture; `explanation.md` created as project secretary |
+| 2026-06-24 | Added `ALREADY_REMEDIATED` detection, run-only patch for partial env binding |
+| 2026-06-24 | Fixed `clean_passthrough2.yml` to already-remediated form; added `testing/` scenarios |
 
 ---
 

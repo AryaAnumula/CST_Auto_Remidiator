@@ -2,7 +2,8 @@
 Stage 2 — depth-first traversal to locate expression sites.
 
 Walks jobs.<job_id>.steps[].run and builds ExpressionSite objects by delegating
-scan/classify work to classify.py.
+scan/classify work to classify.py. Also scans step env: values for audit reporting
+of already-remediated workflows.
 
 MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
 """
@@ -30,8 +31,36 @@ def _string_value(value: object) -> str:
     return str(value)
 
 
+def _collect_sites_from_text(
+    *,
+    job_id: str,
+    step_index: int,
+    step_id: str | None,
+    text: str,
+    scalar: ScalarType,
+) -> list[ExpressionSite]:
+    sites: list[ExpressionSite] = []
+    for expr_text, start, end in find_expressions(text):
+        body = extract_expression_body(expr_text)
+        sites.append(
+            ExpressionSite(
+                job_id=job_id,
+                step_index=step_index,
+                step_id=step_id,
+                expression_text=expr_text,
+                expression_body=body,
+                classification=classify_expression(body),
+                scalar_type=scalar,
+                start_offset=start,
+                end_offset=end,
+                run_value=text,
+            )
+        )
+    return sites
+
+
 def traverse_jobs(document: object) -> list[ExpressionSite]:
-    """Walk ``jobs.<job_id>.steps[].run`` and collect expression sites."""
+    """Walk ``jobs.<job_id>.steps[].run`` and collect expression sites in run scalars."""
     if not isinstance(document, CommentedMap):
         return []
 
@@ -57,21 +86,59 @@ def traverse_jobs(document: object) -> list[ExpressionSite]:
             step_id = step.get("id")
             step_id_str = str(step_id) if step_id is not None else None
 
-            for expr_text, start, end in find_expressions(run_text):
-                body = extract_expression_body(expr_text)
-                sites.append(
-                    ExpressionSite(
-                        job_id=str(job_id),
-                        step_index=step_index,
-                        step_id=step_id_str,
-                        expression_text=expr_text,
-                        expression_body=body,
-                        classification=classify_expression(body),
-                        scalar_type=scalar,
-                        start_offset=start,
-                        end_offset=end,
-                        run_value=run_text,
-                    )
+            sites.extend(
+                _collect_sites_from_text(
+                    job_id=str(job_id),
+                    step_index=step_index,
+                    step_id=step_id_str,
+                    text=run_text,
+                    scalar=scalar,
                 )
+            )
+
+    return sites
+
+
+def traverse_env_bindings(document: object) -> list[ExpressionSite]:
+    """
+    Walk ``jobs.<job_id>.steps[].env`` values and collect UNTRUSTED expression sites.
+
+    Used to detect workflows that already bind untrusted data in env: and reference
+    it from run: via ``$VAR`` (no mutation — audit/report only).
+    """
+    if not isinstance(document, CommentedMap):
+        return []
+
+    jobs = document.get("jobs")
+    if not isinstance(jobs, CommentedMap):
+        return []
+
+    sites: list[ExpressionSite] = []
+    for job_id, job in jobs.items():
+        if not isinstance(job, CommentedMap):
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, CommentedSeq):
+            continue
+        for step_index, step in enumerate(steps):
+            if not isinstance(step, CommentedMap):
+                continue
+            env = step.get("env")
+            if not isinstance(env, CommentedMap):
+                continue
+            step_id = step.get("id")
+            step_id_str = str(step_id) if step_id is not None else None
+
+            for _env_key, env_value in env.items():
+                env_text = _string_value(env_value)
+                for site in _collect_sites_from_text(
+                    job_id=str(job_id),
+                    step_index=step_index,
+                    step_id=step_id_str,
+                    text=env_text,
+                    scalar=ScalarType.PLAIN,
+                ):
+                    if site.classification is Classification.UNTRUSTED:
+                        sites.append(site)
 
     return sites

@@ -18,6 +18,7 @@ from cst_auto_remediator.models import (
     ExpressionSite,
     IngestFailure,
     PlannedPatch,
+    ReasonCode,
     ReportEntry,
     ValidationResult,
 )
@@ -28,8 +29,8 @@ from cst_auto_remediator.mutate import (
     find_run_line_indices,
     serialize_document,
 )
-from cst_auto_remediator.traverse import traverse_jobs
-from cst_auto_remediator.validate import validate_site
+from cst_auto_remediator.traverse import traverse_env_bindings, traverse_jobs
+from cst_auto_remediator.validate import is_step_already_remediated, validate_site
 
 
 def remediate_file(path: str | Path) -> tuple[str | None, list[dict]]:
@@ -55,16 +56,41 @@ def remediate_file(path: str | Path) -> tuple[str | None, list[dict]]:
     metadata = ingest_result.metadata
     original_text = ingest_result.source_text
 
-    sites = traverse_jobs(document)
-    if not sites:
-        return original_text, []
+    run_sites = traverse_jobs(document)
+    env_sites = traverse_env_bindings(document)
 
     report_entries: list[ReportEntry] = []
     patches: list[PlannedPatch] = []
     pending_env_names: dict[tuple[str, int], set[str]] = {}
     input_run_lines: set[int] = set()
 
-    for site in sites:
+    run_site_keys = {
+        (site.job_id, site.step_index, site.expression_text) for site in run_sites
+    }
+
+    for env_site in env_sites:
+        step = _get_step(document, env_site)
+        if step is None:
+            continue
+        key = (env_site.job_id, env_site.step_index, env_site.expression_text)
+        if key in run_site_keys:
+            continue
+        if is_step_already_remediated(step, env_site):
+            report_entries.append(
+                _report_entry(
+                    file_path,
+                    env_site,
+                    ValidationResult(
+                        action=Action.SKIPPED,
+                        reason=ReasonCode.ALREADY_REMEDIATED,
+                    ),
+                )
+            )
+
+    if not run_sites:
+        return original_text, [entry.to_dict() for entry in report_entries]
+
+    for site in run_sites:
         step = _get_step(document, site)
         if step is None:
             continue
@@ -73,7 +99,13 @@ def remediate_file(path: str | Path) -> tuple[str | None, list[dict]]:
         report_entries.append(_report_entry(file_path, site, result))
 
         if result.action is Action.PATCHED and result.env_var_name is not None:
-            patches.append(PlannedPatch(site=site, env_var_name=result.env_var_name))
+            patches.append(
+                PlannedPatch(
+                    site=site,
+                    env_var_name=result.env_var_name,
+                    insert_env=result.insert_env,
+                )
+            )
             input_run_lines |= find_run_line_indices(original_text, site.expression_text)
 
     if not patches:
@@ -129,7 +161,7 @@ def _report_entry(
         step_id=site.step_id,
         action=result.action,
         reason=result.reason,
-        env_var_added=result.env_var_name,
+        env_var_added=result.env_var_name if result.action is Action.PATCHED else None,
         expression_text=site.expression_text,
         classification=site.classification,
         scalar_type=site.scalar_type,

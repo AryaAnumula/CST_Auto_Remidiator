@@ -1,0 +1,23 @@
+# .github/workflows/issue-triage.yml
+# Already remediated: untrusted expression is bound in env:, run uses $ISSUE_TITLE only.
+name: Issue triage
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # NOTE: security-sensitive data is bound in env, not interpolated in run
+      - name: Greet reporter
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: 'echo "Thanks for opening: $ISSUE_TITLE"'
+
+      - name: Add label
+        run: echo "Labeling issue"

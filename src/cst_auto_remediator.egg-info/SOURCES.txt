@@ -13,6 +13,7 @@ src/cst_auto_remediator.egg-info/SOURCES.txt
 src/cst_auto_remediator.egg-info/dependency_links.txt
 src/cst_auto_remediator.egg-info/requires.txt
 src/cst_auto_remediator.egg-info/top_level.txt
+tests/test_already_remediated.py
 tests/test_classify.py
 tests/test_fixtures.py
 tests/test_ingest.py

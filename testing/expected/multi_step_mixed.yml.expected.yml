@@ -1,0 +1,27 @@
+# Mixed workflow: one step already remediated, one vulnerable, one block scalar, one sink.
+name: Mixed remediation scenarios
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  mixed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Already safe greeting
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: 'echo "PR title: $PR_TITLE"'
+
+      - name: Vulnerable comment body
+        env:
+          PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+        run: 'echo "Body says: $PULL_REQUEST_BODY"'
+
+      - name: Block scalar audit only
+        run: |
+          echo "Still vulnerable in block: ${{ github.event.pull_request.title }}"
+
+      - name: Eval sink step
+        run: eval "echo ${{ github.event.pull_request.title }}"

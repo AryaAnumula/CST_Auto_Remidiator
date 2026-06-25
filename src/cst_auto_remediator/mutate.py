@@ -70,20 +70,23 @@ def apply_patches(document: CommentedMap, patches: list[PlannedPatch]) -> None:
             continue
 
         env = step.get("env")
-        if not isinstance(env, CommentedMap):
-            env = CommentedMap()
+        needs_env_insert = any(p.insert_env for p in step_patches)
+        if needs_env_insert:
+            if not isinstance(env, CommentedMap):
+                env = CommentedMap()
 
-        keys = list(step.keys())
-        if "run" in keys:
-            run_index = keys.index("run")
-            if "env" not in step:
-                step.insert(run_index, "env", env)
-        elif "env" not in step:
-            step["env"] = env
+            keys = list(step.keys())
+            if "run" in keys:
+                run_index = keys.index("run")
+                if "env" not in step:
+                    step.insert(run_index, "env", env)
+            elif "env" not in step:
+                step["env"] = env
 
-        env = step["env"]
-        for patch in step_patches:
-            env[patch.env_var_name] = patch.site.expression_text
+            env = step["env"]
+            for patch in step_patches:
+                if patch.insert_env:
+                    env[patch.env_var_name] = patch.site.expression_text
 
         run_original = step["run"]
         run_text = str(run_original)
@@ -162,20 +165,22 @@ def build_patched_text(
                 + new_run_line[position + len(expr) :]
             )
 
-        env_lines = [f"{indent}env:{line_ending}"]
-        for patch in step_patches:
-            env_lines.append(
-                f"{indent}  {patch.env_var_name}: {patch.site.expression_text}{line_ending}"
-            )
-
-        lines[run_idx : run_idx + 1] = env_lines + [new_run_line]
-
-        env_start = run_idx
-        env_end = run_idx + len(env_lines)
-        run_line_idx = env_end
-
-        output_excluded.update(range(env_start, env_end))
-        output_excluded.add(run_line_idx)
+        if any(p.insert_env for p in step_patches):
+            env_lines = [f"{indent}env:{line_ending}"]
+            for patch in step_patches:
+                if patch.insert_env:
+                    env_lines.append(
+                        f"{indent}  {patch.env_var_name}: {patch.site.expression_text}{line_ending}"
+                    )
+            lines[run_idx : run_idx + 1] = env_lines + [new_run_line]
+            env_start = run_idx
+            env_end = run_idx + len(env_lines)
+            run_line_idx = env_end
+            output_excluded.update(range(env_start, env_end))
+            output_excluded.add(run_line_idx)
+        else:
+            lines[run_idx] = new_run_line
+            output_excluded.add(run_idx)
 
     output_text = "".join(lines)
     return output_text, input_run_indices, output_excluded

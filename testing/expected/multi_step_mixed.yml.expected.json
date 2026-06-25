@@ -1,0 +1,58 @@
+[
+  {
+    "file": "testing\\inputs\\multi_step_mixed.yml",
+    "job_id": "mixed",
+    "step": 0,
+    "step_id": null,
+    "action": "SKIPPED",
+    "reason": "ALREADY_REMEDIATED",
+    "env_var_added": null,
+    "expression_text": "${{ github.event.pull_request.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 0,
+    "end_offset": 38
+  },
+  {
+    "file": "testing\\inputs\\multi_step_mixed.yml",
+    "job_id": "mixed",
+    "step": 1,
+    "step_id": null,
+    "action": "PATCHED",
+    "reason": null,
+    "env_var_added": "PULL_REQUEST_BODY",
+    "expression_text": "${{ github.event.pull_request.body }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 17,
+    "end_offset": 54
+  },
+  {
+    "file": "testing\\inputs\\multi_step_mixed.yml",
+    "job_id": "mixed",
+    "step": 2,
+    "step_id": null,
+    "action": "SKIPPED",
+    "reason": "BLOCK_SCALAR_OUT_OF_SCOPE",
+    "env_var_added": null,
+    "expression_text": "${{ github.event.pull_request.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "block",
+    "start_offset": 33,
+    "end_offset": 71
+  },
+  {
+    "file": "testing\\inputs\\multi_step_mixed.yml",
+    "job_id": "mixed",
+    "step": 3,
+    "step_id": null,
+    "action": "BAILED",
+    "reason": "SINK_EVAL",
+    "env_var_added": null,
+    "expression_text": "${{ github.event.pull_request.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 11,
+    "end_offset": 49
+  }
+]

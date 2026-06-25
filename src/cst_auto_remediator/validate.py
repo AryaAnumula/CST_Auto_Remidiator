@@ -177,6 +177,38 @@ def _existing_env_keys(step: CommentedMap) -> set[str]:
     return {str(key).upper() for key in env.keys()}
 
 
+def env_var_for_expression(step: CommentedMap, expression_text: str) -> str | None:
+    """Return the env key whose value equals *expression_text*, if any."""
+    env = step.get("env")
+    if not isinstance(env, CommentedMap):
+        return None
+    for key, value in env.items():
+        if str(value).strip() == expression_text.strip():
+            return str(key)
+    return None
+
+
+def run_references_env_var(run_value: str, env_var_name: str) -> bool:
+    """Return True when *run_value* references ``$env_var_name`` as a shell variable."""
+    return f"${env_var_name}" in run_value
+
+
+def is_step_already_remediated(step: CommentedMap, env_site: ExpressionSite) -> bool:
+    """
+    True when *env_site* binds an UNTRUSTED expression in env: and run: uses ``$VAR``
+    without embedding the same ``${{ ... }}`` expression text.
+    """
+    if "run" not in step:
+        return False
+    run_text = str(step["run"])
+    if env_site.expression_text in run_text:
+        return False
+    bound_name = env_var_for_expression(step, env_site.expression_text)
+    if bound_name is None:
+        return False
+    return run_references_env_var(run_text, bound_name)
+
+
 def validate_site(
     site: ExpressionSite,
     step: CommentedMap,
@@ -210,6 +242,14 @@ def validate_site(
             reason=ReasonCode.SINGLE_QUOTED_EXPRESSION,
         )
 
+    existing_binding = env_var_for_expression(step, site.expression_text)
+    if existing_binding is not None:
+        return ValidationResult(
+            action=Action.PATCHED,
+            env_var_name=existing_binding,
+            insert_env=False,
+        )
+
     env_name = generate_env_var_name(site.expression_body)
     existing = _existing_env_keys(step)
     if env_name.upper() in existing:
@@ -226,4 +266,4 @@ def validate_site(
         )
 
     used.add(env_name.upper())
-    return ValidationResult(action=Action.PATCHED, env_var_name=env_name)
+    return ValidationResult(action=Action.PATCHED, env_var_name=env_name, insert_env=True)

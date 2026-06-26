@@ -213,8 +213,9 @@ def validate_site(
     site: ExpressionSite,
     step: CommentedMap,
     pending_env_names: dict[tuple[str, int], set[str]],
+    job_steps: list[CommentedMap] | None = None,
 ) -> ValidationResult:
-    """Apply the Stage 3 rule chain to a single expression site."""
+    """Apply the Stage 3/4 rule chain to a single expression site."""
     step_key = (site.job_id, site.step_index)
 
     if site.scalar_type is ScalarType.BLOCK:
@@ -251,7 +252,19 @@ def validate_site(
         )
 
     env_name = generate_env_var_name(site.expression_body)
-    existing = _existing_env_keys(step)
+    
+    # Check for name collisions across all steps in the job if job_steps is available
+    existing = set()
+    if job_steps is not None:
+        for s in job_steps:
+            if isinstance(s, CommentedMap):
+                env = s.get("env")
+                if isinstance(env, CommentedMap):
+                    for key in env.keys():
+                        existing.add(str(key).upper())
+    else:
+        existing = _existing_env_keys(step)
+
     if env_name.upper() in existing:
         return ValidationResult(
             action=Action.BAILED,

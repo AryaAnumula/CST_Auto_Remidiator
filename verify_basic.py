@@ -2,13 +2,26 @@
 Verification script — Task 1 & 3 from the handoff doc.
 Run from PowerShell: python verify_basic.py
 """
+import sys
+from pathlib import Path
 from cst_auto_remediator import remediate_file
 from cst_auto_remediator.ingest import ingest
 from cst_auto_remediator.models import IngestSuccess
 from cst_auto_remediator.traverse import traverse_jobs
 import json
 
-FIXTURE = "fixtures/clean_passthrough.yml"
+# FIXTURE = "fixtures/clean_passthrough.yml"
+# FIXTURE = "testing/stage3/T002_unquoted_echo.yml"
+
+import sys
+from pathlib import Path
+
+DEFAULT_FIXTURE = Path("fixtures/clean_passthrough.yml")
+
+FIXTURE = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FIXTURE
+
+if not FIXTURE.exists():
+    raise FileNotFoundError(f"Fixture not found: {FIXTURE}")
 
 yaml_out, report = remediate_file(FIXTURE)
 

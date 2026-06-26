@@ -1,0 +1,13 @@
+name: T004 Variable Assignment
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Store Version
+        run: VERSION="${{ github.event.issue.title }}"

@@ -60,10 +60,17 @@ CST_Auto_Remidiator/
 │   │   ├── scanner.py        ← Decoupled balanced-brace expression scanner
 │   │   └── builder.py        ← Semantic model builder & Diagnostics (GHA001-GHA010)
 │   │
-│   └── gha_metadata/         ← Stage 4: GHA Metadata Providers
-│       ├── nodes.py          ← Metadata models (Position, Scope, Shell, Expression, Bundle)
-│       ├── engine.py         ← MetadataWrapper cache engine & MetadataProvider
-│       └── providers.py      ← Concrete Position, Scope, Shell, and Expression providers
+│   ├── gha_metadata/         ← Stage 4: GHA Metadata Providers
+│   │   ├── nodes.py          ← Metadata models (Position, Scope, Shell, Expression, Bundle)
+│   │   ├── engine.py         ← MetadataWrapper cache engine & MetadataProvider
+│   │   └── providers.py      ← Concrete Position, Scope, Shell, and Expression providers
+│   │
+│   └── gha_analysis/         ← Stage 5: GHA Security Analysis
+│       ├── nodes.py          ← Finding enums and analysis models (Trust, Sink, Decision, Statistics)
+│       ├── classifier.py     ← Taint-source prefixes and environment variable taint propagation
+│       ├── validator.py      ← Supported shells, runners, scalar styles, and quoting checkers
+│       ├── diagnostics.py    ← Compiler warning and error diagnostics (ANA001-ANA005)
+│       └── analyzer.py       ← analyze_workflow() central driver querying Stage 4 metadata
 │
 ├── tests/                    ← pytest suite
 │   ├── test_classify.py      ← Unit tests for classification
@@ -74,6 +81,7 @@ CST_Auto_Remidiator/
 │   ├── test_stage2_comprehensive.py ← Stage 2 Green CST tests
 │   ├── test_stage3_comprehensive.py ← Stage 3 GHA Semantic Layer tests
 │   ├── test_stage4_comprehensive.py ← Stage 4 Metadata Providers tests
+│   ├── test_stage5_comprehensive.py ← Stage 5 Security Analysis tests
 │   └── test_pipeline_integration.py ← End-to-end compiler integration tests
 │
 ├── testing/                  ← Complex integration scenarios (see testing/README.md)
@@ -407,6 +415,7 @@ We must **not** add metadata or analysis fields (such as `classification`, `reas
 | 2026-06-28 | Completed Stage 2 Green CST Construction, enhanced copy-on-write methods, added structural equality, and added comprehensive test suite |
 | 2026-06-28 | Completed Stage 3 GHA Semantic Layer: scanner, nodes, builder, diagnostics (GHA001-GHA010), and test_stage3_comprehensive.py |
 | 2026-06-28 | Completed Stage 4 GHA Metadata Providers: wrapper cache engine, Position, Scope, Shell, and Expression providers, and test_stage4_comprehensive.py |
+| 2026-06-28 | Completed Stage 5 GHA Security Analysis: enums, nodes, classifier, validator, diagnostics (ANA001-ANA005), analyzer, and test_stage5_comprehensive.py |
 
 ---
 

@@ -48,14 +48,33 @@ CST_Auto_Remidiator/
 │   ├── traverse.py           ← Stage 2: walk jobs/steps/run
 │   ├── validate.py           ← Stage 3: rule chain (sinks, collisions)
 │   ├── mutate.py             ← Stage 3: CST patch + byte-preserving text output
-│   └── pipeline.py           ← Orchestrator: wires Stages 1→2→3
+│   ├── pipeline.py           ← Orchestrator: wires Stages 1→2→3
+│   │
+│   ├── yaml_cst/             ← Stage 2: Immutable Lossless YAML CST Nodes & Builder
+│   │   ├── nodes.py          ← Green CST Node classes (Frozen dataclasses)
+│   │   ├── builder.py        ← CST Builder converting ruamel parsed maps/seqs
+│   │   └── parser.py         ← Stage 1: UTF-8, YamlBomb, size limits and parser
+│   │
+│   ├── gha_semantic/         ← Stage 3: GHA Semantic Layer
+│   │   ├── nodes.py          ← Semantic concepts (Workflow, Job, Step, run, env)
+│   │   ├── scanner.py        ← Decoupled balanced-brace expression scanner
+│   │   └── builder.py        ← Semantic model builder & Diagnostics (GHA001-GHA010)
+│   │
+│   └── gha_metadata/         ← Stage 4: GHA Metadata Providers
+│       ├── nodes.py          ← Metadata models (Position, Scope, Shell, Expression, Bundle)
+│       ├── engine.py         ← MetadataWrapper cache engine & MetadataProvider
+│       └── providers.py      ← Concrete Position, Scope, Shell, and Expression providers
 │
 ├── tests/                    ← pytest suite
 │   ├── test_classify.py      ← Unit tests for classification
 │   ├── test_validate.py      ← Unit tests for validation rules
 │   ├── test_ingest.py        ← Stage 1 / line-ending tests
 │   ├── test_fixtures.py      ← Integration tests over fixtures/
-│   └── test_already_remediated.py ← Already-remediated + testing/ scenarios
+│   ├── test_already_remediated.py ← Already-remediated + testing/ scenarios
+│   ├── test_stage2_comprehensive.py ← Stage 2 Green CST tests
+│   ├── test_stage3_comprehensive.py ← Stage 3 GHA Semantic Layer tests
+│   ├── test_stage4_comprehensive.py ← Stage 4 Metadata Providers tests
+│   └── test_pipeline_integration.py ← End-to-end compiler integration tests
 │
 ├── testing/                  ← Complex integration scenarios (see testing/README.md)
 │   ├── inputs/               ← Scenario YAML inputs
@@ -77,6 +96,26 @@ CST_Auto_Remidiator/
 ├── verify_diff2.py           ← Manual diff: already-remediated fixture (expects NO diff)
 ├── verify_output.yml         ← Ephemeral output from verify_diff.py
 └── verify_output2.yml        ← Ephemeral output from verify_diff2.py
+```
+
+## Architecture Flow (Version 1)
+
+```
+Parser
+↓
+Green CST
+↓
+Semantic Layer
+↓
+Metadata
+↓
+Transformation
+↓
+Synchronization Layer
+↓
+ruamel Formatting Model
+↓
+Serializer
 ```
 
 ---
@@ -313,6 +352,37 @@ python scripts/regenerate_expected.py
 
 ---
 
+## Architectural Stage Guidelines & Invariants
+
+To maintain a clean compiler structure, the following stage definitions and boundary rules are enforced:
+
+### 1. Stage Ownership Matrix
+
+| Stage | Owns |
+| :--- | :--- |
+| **Stage 1** | Parsing only |
+| **Stage 2** | Syntax only |
+| **Stage 3** | Semantics only |
+| **Stage 4** | Metadata only |
+| **Stage 5** | Security analysis only |
+| **Stage 6** | Mutation only |
+| **Stage 7** | Verification only |
+| **Stage 8** | Serialization only |
+
+### 2. Semantic Model Scope
+Stage 3 models the general **GitHub Actions execution structure**, while Version 1 actively analyzes only `RunCommand` and `EnvBinding` expression sites.
+
+### 3. Metadata Invariant: Facts, Not Decisions
+Metadata Providers (Stage 4) gather objective facts about the CST/Semantic structure, they **never** make security decisions (which are deferred entirely to Stage 5):
+* **Good Metadata (Stage 4)**: Effective shell, runner, env scopes, node paths, offset maps, duplicate expressions, step/run ordering.
+* **Bad Metadata (Stage 4 - DO NOT DO)**: Trusted, untrusted, dangerous, vulnerable, malicious.
+
+### 4. ExpressionSite Purity
+`ExpressionSite` nodes remain strictly **syntax-oriented**. They represent syntax locations and character indices only. 
+We must **not** add metadata or analysis fields (such as `classification`, `reason`, `sink`, `severity`, or `patched`) directly to the `ExpressionSite` syntax/semantic node. Those facts and findings belong to Stage 4 (Metadata) and Stage 5 (Security Analysis / Finding logs) registries.
+
+---
+
 ## Known gaps (future sessions — do not “fix” silently)
 
 - Block scalar (`run: |` / `>`) remediation — detected only
@@ -334,6 +404,9 @@ python scripts/regenerate_expected.py
 | 2026-06-24 | Added `crlf_preservation` fixture; `explanation.md` created as project secretary |
 | 2026-06-24 | Added `ALREADY_REMEDIATED` detection, run-only patch for partial env binding |
 | 2026-06-24 | Fixed `clean_passthrough2.yml` to already-remediated form; added `testing/` scenarios |
+| 2026-06-28 | Completed Stage 2 Green CST Construction, enhanced copy-on-write methods, added structural equality, and added comprehensive test suite |
+| 2026-06-28 | Completed Stage 3 GHA Semantic Layer: scanner, nodes, builder, diagnostics (GHA001-GHA010), and test_stage3_comprehensive.py |
+| 2026-06-28 | Completed Stage 4 GHA Metadata Providers: wrapper cache engine, Position, Scope, Shell, and Expression providers, and test_stage4_comprehensive.py |
 
 ---
 

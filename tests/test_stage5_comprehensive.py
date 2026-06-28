@@ -93,7 +93,7 @@ def test_mixed_and_unknown_classification() -> None:
     u_class = result.expression_classifications["jobs.build.steps.1.run.exprs.0"]
     assert u_class.trust_level is TrustLevel.UNKNOWN
     assert u_class.decision is AnalysisDecision.BAILOUT
-    assert u_class.bailout_reason is BailoutReason.UNKNOWN_CONTEXT
+    assert u_class.bailout_reason is BailoutReason.UNKNOWN_SOURCE
     assert u_class.diagnostics[0].code == "ANA001"
 
 
@@ -117,7 +117,7 @@ def test_env_expressions_and_duplicate_handling() -> None:
     env_class = result.expression_classifications["jobs.build.steps.0.env.TITLE.exprs.0"]
     assert env_class.sink_kind is SinkKind.ENV_ASSIGNMENT
     assert env_class.decision is AnalysisDecision.SKIP
-    assert env_class.bailout_reason is BailoutReason.SAFE_ALREADY
+    assert env_class.bailout_reason is BailoutReason.DEFERRED_ENV_REMEDIATION
 
     # Run expression (remediate)
     run_class = result.expression_classifications["jobs.build.steps.0.run.exprs.0"]

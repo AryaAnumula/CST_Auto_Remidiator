@@ -143,7 +143,7 @@ def analyze_workflow(workflow: Any, metadata: Any) -> SecurityAnalysisResult:
                         decision = AnalysisDecision.REMEDIATE
                         expr_diags.append(make_ana004(expr.node.span, expr.expression_text))
                     elif trust is TrustLevel.UNKNOWN:
-                        bailout = BailoutReason.UNKNOWN_CONTEXT
+                        bailout = BailoutReason.UNKNOWN_SOURCE
                         decision = AnalysisDecision.BAILOUT
                         expr_diags.append(make_ana001(expr.node.span, expr.expression_text))
                     else:
@@ -168,7 +168,7 @@ def analyze_workflow(workflow: Any, metadata: Any) -> SecurityAnalysisResult:
                     sink_kind=SinkKind.RUN_COMMAND,
                     decision=decision,
                     bailout_reason=bailout,
-                    shell_kind=shell_meta.effective_shell if shell_meta else "bash",
+                    shell=shell_meta,
                     scope=scope_meta,
                     diagnostics=expr_diags,
                 )
@@ -190,7 +190,7 @@ def analyze_workflow(workflow: Any, metadata: Any) -> SecurityAnalysisResult:
 
                 # Environment assignment is a safe sink; skip remediation
                 decision = AnalysisDecision.SKIP
-                bailout = BailoutReason.SAFE_ALREADY
+                bailout = BailoutReason.DEFERRED_ENV_REMEDIATION
                 stats["skipped"] += 1
 
                 classification = ExpressionClassification(
@@ -201,7 +201,7 @@ def analyze_workflow(workflow: Any, metadata: Any) -> SecurityAnalysisResult:
                     sink_kind=SinkKind.ENV_ASSIGNMENT,
                     decision=decision,
                     bailout_reason=bailout,
-                    shell_kind=shell_meta.effective_shell if shell_meta else "bash",
+                    shell=shell_meta,
                     scope=scope_meta,
                     diagnostics=[],
                 )

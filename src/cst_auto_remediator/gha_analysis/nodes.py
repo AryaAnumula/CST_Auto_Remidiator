@@ -12,7 +12,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cst_auto_remediator.gha_semantic.nodes import ExpressionSite, Diagnostic, Workflow
-    from cst_auto_remediator.gha_metadata.nodes import ScopeMetadata
+    from cst_auto_remediator.gha_metadata.nodes import ScopeMetadata, ShellMetadata
 
 
 class TrustLevel(str, Enum):
@@ -47,9 +47,10 @@ class BailoutReason(str, Enum):
     UNSUPPORTED_RUNNER = "UNSUPPORTED_RUNNER"
     INVALID_STRUCTURE = "INVALID_STRUCTURE"
     NO_EXPRESSION = "NO_EXPRESSION"
-    UNKNOWN_CONTEXT = "UNKNOWN_CONTEXT"
+    UNKNOWN_SOURCE = "UNKNOWN_SOURCE"
     UNSUPPORTED_FEATURE = "UNSUPPORTED_FEATURE"
     SAFE_ALREADY = "SAFE_ALREADY"
+    DEFERRED_ENV_REMEDIATION = "DEFERRED_ENV_REMEDIATION"
 
 
 class AnalysisDecision(str, Enum):
@@ -68,7 +69,7 @@ class ExpressionClassification:
     sink_kind: SinkKind
     decision: AnalysisDecision
     bailout_reason: BailoutReason
-    shell_kind: str
+    shell: ShellMetadata | None
     scope: ScopeMetadata | None
     diagnostics: list[Diagnostic] = field(default_factory=list)
 

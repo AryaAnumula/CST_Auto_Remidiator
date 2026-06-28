@@ -1,0 +1,15 @@
+# Description: YAML document containing nested mapping and multi-line comments.
+# Expected Compiler Behaviour: Successful parse, comments preserved losslessly in CST.
+# Stop Stage: None (full analysis)
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Comment Test
+on: push
+jobs:
+  # Job comment
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Step comment
+      - name: Step 1
+        run: echo "hello"

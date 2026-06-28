@@ -1,0 +1,13 @@
+# Description: Workflow containing CRLF line endings.
+# Expected Compiler Behaviour: Parser detects dominant line ending style as CRLF.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: CRLF Test
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Step 1
+        run: echo "CRLF Line ending"

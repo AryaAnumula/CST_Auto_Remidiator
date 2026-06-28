@@ -1,0 +1,13 @@
+# Description: Step run contains escaped GHA delimiters and malformed expression syntax.
+# Expected Compiler Behaviour: Parser runs. Stage 3 or 5 diagnostic generated if syntax is invalid.
+# Stop Stage: None
+# Expected Diagnostics: GHA008 or ANA001
+# Expected Analysis Decision: BAILOUT (due to malformed context / unknown source)
+name: Escaped Malformed Test
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Escaped delimiters
+        run: echo $${{ github.sha }} and ${{ github.unclosed

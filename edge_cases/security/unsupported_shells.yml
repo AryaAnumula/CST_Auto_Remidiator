@@ -1,0 +1,14 @@
+# Description: Step run evaluates on unsupported shell (e.g. Windows runs pwsh or custom python).
+# Expected Compiler Behaviour: Bails out due to unsupported shell environment.
+# Stop Stage: Stage 5 (Security Analysis)
+# Expected Diagnostics: ANA002 (Unsupported step shell environment)
+# Expected Analysis Decision: BAILOUT
+name: Unsupported Shells Test
+on: pull_request
+jobs:
+  python_step:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Python run
+        run: print('${{ github.event.issue.title }}')
+        shell: python

@@ -1,0 +1,15 @@
+# Description: Vulnerable expression already remediated by step-level environment variables mapping.
+# Expected Compiler Behaviour: Resolved as safe sink (already remediated). Skipped during Stage 5.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SKIP (deferred env remediation)
+name: Already Remediated
+on: pull_request
+jobs:
+  secure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Safe run
+        env:
+          USER_TITLE: ${{ github.event.issue.title }}
+        run: echo "Title: $USER_TITLE"

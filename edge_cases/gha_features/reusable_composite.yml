@@ -1,0 +1,10 @@
+# Description: Workflow referencing reusable workflow or composite action steps.
+# Expected Compiler Behaviour: Successfully parsed and analyzed. Non-run steps are ignored by analyzer.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Reusable Workflow Test
+on: push
+jobs:
+  call-workflow:
+    uses: octocat/octo-repo/.github/workflows/reusable.yml@main

@@ -1,0 +1,15 @@
+# Description: YAML document containing anchors and aliases for step templates.
+# Expected Compiler Behaviour: Success. Parser resolves alias reference during build.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Anchor Alias Test
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - &run_step
+        name: Template Step
+        run: echo "template"
+      - <<: *run_step

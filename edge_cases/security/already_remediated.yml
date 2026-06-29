@@ -12,4 +12,4 @@ jobs:
       - name: Safe run
         env:
           USER_TITLE: ${{ github.event.issue.title }}
-        run: echo "Title: $USER_TITLE"
+        run: 'echo "Title: $USER_TITLE"'

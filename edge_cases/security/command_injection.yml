@@ -10,4 +10,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Direct injection sink
-        run: echo "User payload: ${{ github.event.issue.title }}"
+        run: 'echo "User payload: ${{ github.event.issue.title }}"'

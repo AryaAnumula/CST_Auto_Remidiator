@@ -1,0 +1,16 @@
+--- C:\CST\testing\inputs\testing2.yml
+
++++ C:\CST\testing\output\testing2.output.yml
+
+@@ -18,7 +18,9 @@
+
+           curl -sSfL "https://github.com/convco/convco/releases/download/${{ env.CONVCO_VERSION }}/convco-ubuntu.zip" | zcat > /usr/local/bin/convco
+           chmod +x /usr/local/bin/convco
+       - name: Check PR Title is Conventional
+-        run: echo "${{ github.event.pull_request.title }}" | convco check --from-stdin
++        env:
++          PULL_REQUEST_TITLE: ${{ github.event.pull_request.title }}
++        run: echo "$PULL_REQUEST_TITLE" | convco check --from-stdin
+   dismiss-stale-pr-reviews:
+     runs-on: ubuntu-22.04
+     if: github.event.action == 'edited'

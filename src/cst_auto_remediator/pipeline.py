@@ -15,22 +15,12 @@ from ruamel.yaml.comments import CommentedMap
 from cst_auto_remediator.ingest import ingest
 from cst_auto_remediator.models import (
     Action,
-    ExpressionSite,
     IngestFailure,
-    PlannedPatch,
     ReasonCode,
     ReportEntry,
-    ValidationResult,
 )
-from cst_auto_remediator.mutate import (
-    apply_patches,
-    assert_byte_preservation,
-    build_patched_text,
-    find_run_line_indices,
-    serialize_document,
-)
-from cst_auto_remediator.traverse import traverse_env_bindings, traverse_jobs
-from cst_auto_remediator.validate import is_step_already_remediated, validate_site
+from cst_auto_remediator.traverse import traverse_env_bindings
+from cst_auto_remediator.validate import is_step_already_remediated
 
 
 def semantic_verify(patched_yaml: str, patched_steps: set[tuple[str, int]]) -> bool:
@@ -39,41 +29,34 @@ def semantic_verify(patched_yaml: str, patched_steps: set[tuple[str, int]]) -> b
     Parses the patched YAML, extracts and classifies all ${{ }} expressions
     in the run blocks of patched steps, and ensures no UNTRUSTED expressions remain.
     """
-    from ruamel.yaml import YAML
-    from ruamel.yaml.error import YAMLError
-    from io import StringIO
-    from cst_auto_remediator.classify import classify_expression, extract_expression_body, find_expressions
-    from cst_auto_remediator.models import Classification
+    from cst_auto_remediator.yaml_cst.parser import parse_yaml, ParsingError
+    from cst_auto_remediator.yaml_cst.builder import build_cst
+    from cst_auto_remediator.gha_semantic.builder import build_semantic_model
+    from cst_auto_remediator.gha_metadata.engine import MetadataWrapper
+    from cst_auto_remediator.gha_analysis.analyzer import analyze_workflow
+    from cst_auto_remediator.gha_analysis.nodes import AnalysisDecision
+    from cst_auto_remediator.gha_metadata.providers import PositionProvider
 
     try:
-        yaml = YAML(typ="rt")
-        doc = yaml.load(StringIO(patched_yaml))
-        if not isinstance(doc, CommentedMap):
+        doc, meta = parse_yaml(patched_yaml.encode("utf-8"))
+        cst = build_cst(doc, meta)
+        semantic = build_semantic_model(cst)
+        if semantic.workflow is None:
             return False
 
-        jobs = doc.get("jobs")
-        if not isinstance(jobs, CommentedMap):
-            return True # Syntactically valid GHA without jobs (empty or metadata only)
+        wrapper = MetadataWrapper(semantic.workflow)
+        analysis = analyze_workflow(semantic.workflow, wrapper)
 
-        for job_id, job in jobs.items():
-            if not isinstance(job, CommentedMap):
-                continue
-            steps = job.get("steps")
-            if not isinstance(steps, list):
-                continue
-            for idx, step in enumerate(steps):
-                if not isinstance(step, CommentedMap):
-                    continue
-                step_key = (str(job_id), idx)
+        for classif in analysis.expression_classifications.values():
+            expr = classif.expression_site
+            pos = wrapper.get(PositionProvider, expr)
+            if pos is not None and pos.job_id is not None:
+                step_key = (pos.job_id, pos.step_index)
                 if step_key in patched_steps:
-                    if "run" in step:
-                        run_val = str(step["run"])
-                        for expr_text, _, _ in find_expressions(run_val):
-                            body = extract_expression_body(expr_text)
-                            if classify_expression(body) is Classification.UNTRUSTED:
-                                return False
+                    if classif.decision == AnalysisDecision.REMEDIATE:
+                        return False
         return True
-    except YAMLError:
+    except ParsingError:
         return False
     except Exception:
         return False
@@ -85,7 +68,7 @@ def remediate_file(
     write_back: bool = False,
 ) -> tuple[str | None, list[dict]]:
     """
-    Run Stages 1–5 on a workflow file.
+    Run Stages 1–7 on a workflow file.
 
     Returns ``(yaml_output, report)`` where *yaml_output* is ``None`` on
     Stage 1 ingest failure, and *report* is a list of JSON-serializable dicts.
@@ -106,104 +89,127 @@ def remediate_file(
     metadata = ingest_result.metadata
     original_text = ingest_result.source_text
 
-    run_sites = traverse_jobs(document)
-    env_sites = traverse_env_bindings(document)
+    # Run Stages 2-5
+    from cst_auto_remediator.yaml_cst.builder import build_cst
+    from cst_auto_remediator.gha_semantic.builder import build_semantic_model
+    from cst_auto_remediator.gha_metadata.engine import MetadataWrapper
+    from cst_auto_remediator.gha_analysis.analyzer import analyze_workflow
+    from cst_auto_remediator.gha_analysis.nodes import AnalysisDecision
+    from cst_auto_remediator.gha_metadata.providers import PositionProvider, ExpressionProvider
+    from cst_auto_remediator.validate import detect_sink, env_var_for_expression, is_step_already_remediated, _existing_env_keys
 
-    report_entries: list[ReportEntry] = []
-    patches: list[PlannedPatch] = []
+    cst = build_cst(document, metadata)
+    semantic = build_semantic_model(cst)
+    if semantic.workflow is None:
+        return original_text, []
+
+    wrapper = MetadataWrapper(semantic.workflow)
+    analysis = analyze_workflow(semantic.workflow, wrapper)
+
+    # Replicate legacy overrides for backward compatibility in the public API
     pending_env_names: dict[tuple[str, int], set[str]] = {}
-    input_run_lines: set[int] = set()
+    jobs = document.get("jobs", {})
 
-    run_site_keys = {
-        (site.job_id, site.step_index, site.expression_text) for site in run_sites
-    }
+    for job_id, job_node in semantic.workflow.jobs.items():
+        job_map = jobs.get(job_id) if isinstance(jobs, CommentedMap) else None
+        job_steps = list(job_map.get("steps")) if isinstance(job_map, CommentedMap) and isinstance(job_map.get("steps"), list) else None
 
-    for env_site in env_sites:
-        step = _get_step(document, env_site)
-        if step is None:
-            continue
-        key = (env_site.job_id, env_site.step_index, env_site.expression_text)
-        if key in run_site_keys:
-            continue
-        if is_step_already_remediated(step, env_site):
-            report_entries.append(
-                _report_entry(
-                    file_path,
-                    env_site,
-                    ValidationResult(
-                        action=Action.SKIPPED,
-                        reason=ReasonCode.ALREADY_REMEDIATED,
-                    ),
-                )
-            )
+        for step in job_node.steps:
+            step_key = (job_id, step.step_index)
+            step_map = job_steps[step.step_index] if job_steps and step.step_index < len(job_steps) else None
 
-    if not run_sites:
-        return original_text, [entry.to_dict() for entry in report_entries]
+            existing_env = set()
+            if job_steps is not None:
+                for s in job_steps:
+                    if isinstance(s, CommentedMap):
+                        env = s.get("env")
+                        if isinstance(env, CommentedMap):
+                            for key in env.keys():
+                                existing_env.add(str(key).upper())
+            elif step_map is not None:
+                existing_env = _existing_env_keys(step_map)
 
-    # Validate each site in run_sites with job context
-    site_results: dict[ExpressionSite, ValidationResult] = {}
-    for site in run_sites:
-        step = _get_step(document, site)
-        if step is None:
-            continue
+            run_exprs = step.run_command.expression_sites if step.run_command is not None else []
+            for expr in run_exprs:
+                expr_meta = wrapper.get(ExpressionProvider, expr)
+                stable_id = expr_meta.stable_id if expr_meta else None
+                if not stable_id or stable_id not in analysis.expression_classifications:
+                    continue
 
-        jobs = document.get("jobs", {})
-        job = jobs.get(site.job_id) if isinstance(jobs, CommentedMap) else None
-        job_steps = list(job.get("steps")) if isinstance(job, CommentedMap) and isinstance(job.get("steps"), list) else None
+                classif = analysis.expression_classifications[stable_id]
+                if classif.decision == AnalysisDecision.REMEDIATE:
+                    # 1. Eval / Command Substitution Sink detection
+                    sink = detect_sink(expr.node.value, expr.start_offset, expr.end_offset)
+                    if sink is not None:
+                        object.__setattr__(classif, "decision", AnalysisDecision.BAILOUT)
+                        object.__setattr__(classif, "bailout_reason", sink)
+                        continue
 
-        result = validate_site(site, step, pending_env_names, job_steps)
-        site_results[site] = result
+                    # If the expression is already bound in the step env, reuse it and skip name collision check
+                    existing_binding = env_var_for_expression(step_map, expr.expression_text) if step_map is not None else None
+                    if existing_binding is not None:
+                        continue
+
+                    # 2. Env Name Collision detection
+                    from cst_auto_remediator.validate import generate_env_var_name
+                    env_name = generate_env_var_name(expr.expression_body)
+                    if env_name.upper() in existing_env:
+                        object.__setattr__(classif, "decision", AnalysisDecision.BAILOUT)
+                        object.__setattr__(classif, "bailout_reason", ReasonCode.ENV_NAME_COLLISION)
+                        continue
+
+                    # 3. Generated Name Collision detection
+                    used = pending_env_names.setdefault(step_key, set())
+                    if env_name.upper() in used:
+                        object.__setattr__(classif, "decision", AnalysisDecision.BAILOUT)
+                        object.__setattr__(classif, "bailout_reason", ReasonCode.GENERATED_NAME_COLLISION)
+                        continue
+
+                    used.add(env_name.upper())
 
     # Step-level bailing check: if any expression in a step is BAILED, we bail on the entire step
-    by_step_sites: dict[tuple[str, int], list[ExpressionSite]] = {}
-    for site in run_sites:
-        if site in site_results:
-            by_step_sites.setdefault((site.job_id, site.step_index), []).append(site)
+    for job_id, job_node in semantic.workflow.jobs.items():
+        for step in job_node.steps:
+            run_exprs = step.run_command.expression_sites if step.run_command is not None else []
+            
+            bailed_reason = None
+            for expr in run_exprs:
+                expr_meta = wrapper.get(ExpressionProvider, expr)
+                if expr_meta and expr_meta.stable_id in analysis.expression_classifications:
+                    classif = analysis.expression_classifications[expr_meta.stable_id]
+                    if classif.decision == AnalysisDecision.BAILOUT:
+                        bailed_reason = classif.bailout_reason
+                        break
+            
+            if bailed_reason is not None:
+                for expr in run_exprs:
+                    expr_meta = wrapper.get(ExpressionProvider, expr)
+                    if expr_meta and expr_meta.stable_id in analysis.expression_classifications:
+                        classif = analysis.expression_classifications[expr_meta.stable_id]
+                        if classif.decision == AnalysisDecision.REMEDIATE:
+                            object.__setattr__(classif, "decision", AnalysisDecision.BAILOUT)
+                            object.__setattr__(classif, "bailout_reason", bailed_reason)
 
-    for _step_key, step_sites in by_step_sites.items():
-        bailed_site_res = next((site_results[s] for s in step_sites if site_results[s].action is Action.BAILED), None)
-        if bailed_site_res is not None:
-            for s in step_sites:
-                if site_results[s].action is Action.PATCHED:
-                    site_results[s] = ValidationResult(
-                        action=Action.BAILED,
-                        reason=bailed_site_res.reason,
-                    )
+    # Run Stage 6 Planner and Transformer
+    from cst_auto_remediator.gha_transform.planner import MutationPlanner
+    from cst_auto_remediator.gha_transform.transformer import CSTTransformer
+    
+    plan = MutationPlanner(wrapper).build_plan(analysis)
+    transform_res = CSTTransformer().transform(plan)
 
-    # Process validated results
-    for site in run_sites:
-        if site not in site_results:
-            continue
-        result = site_results[site]
-        report_entries.append(_report_entry(file_path, site, result))
-
-        if result.action is Action.PATCHED and result.env_var_name is not None:
-            patches.append(
-                PlannedPatch(
-                    site=site,
-                    env_var_name=result.env_var_name,
-                    insert_env=result.insert_env,
-                )
-            )
-            input_run_lines |= find_run_line_indices(original_text, site.expression_text)
-
-    if not patches:
-        return original_text, [entry.to_dict() for entry in report_entries]
-
-    apply_patches(document, patches)
-    _ = serialize_document(document)
-
-    output_text, input_run_lines, output_excluded = build_patched_text(
-        original_text,
-        patches,
-        metadata.line_ending,
-    )
-    assert_byte_preservation(original_text, output_text, input_run_lines, output_excluded)
+    # Run Stage 7 Serializer if mutated
+    if transform_res.applied_step_mutations:
+        from cst_auto_remediator.gha_transform.serializer import serialize_document
+        output_bytes = serialize_document(transform_res.cst, document, cst, original_text)
+        output_text = output_bytes.decode("utf-8")
+    else:
+        output_text = original_text
 
     # Perform Stage 5 Semantic Verification on memory string first
-    patched_steps = {(p.site.job_id, p.site.step_index) for p in patches}
-    if not semantic_verify(output_text, patched_steps):
-        raise AssertionError("Semantic verification failed: untrusted expressions remain or invalid YAML structure")
+    patched_steps = {(m.job_id, m.step_index) for m in transform_res.applied_step_mutations}
+    if patched_steps:
+        if not semantic_verify(output_text, patched_steps):
+            raise AssertionError("Semantic verification failed: untrusted expressions remain or invalid YAML structure")
 
     # Perform Stage 5 Atomic Write back if requested
     if write_back:
@@ -237,7 +243,99 @@ def remediate_file(
                     pass
             raise e
 
-    return output_text, [entry.to_dict() for entry in report_entries]
+    # Build report entries
+    report_entries: list[dict] = []
+    
+    # 1. Add already-remediated env sites to the report
+    env_sites = traverse_env_bindings(document)
+    for env_site in env_sites:
+        step_map = _get_step(document, env_site)
+        if step_map is None:
+            continue
+        if is_step_already_remediated(step_map, env_site):
+            report_entries.append({
+                "file": _report_file_path(file_path),
+                "job_id": env_site.job_id,
+                "step": env_site.step_index,
+                "step_id": env_site.step_id,
+                "action": "SKIPPED",
+                "reason": "ALREADY_REMEDIATED",
+                "env_var_added": None,
+                "expression_text": env_site.expression_text,
+                "classification": "UNTRUSTED",
+                "scalar_type": env_site.scalar_type.value,
+                "start_offset": env_site.start_offset,
+                "end_offset": env_site.end_offset,
+            })
+
+    # 2. Add run expressions to the report
+    remediated_names = {}
+    for mutation in transform_res.applied_step_mutations:
+        for replacement in mutation.replacements:
+            remediated_names[replacement.expression_id] = replacement.env_var_name
+
+    for job_id, job_node in semantic.workflow.jobs.items():
+        job_map = jobs.get(job_id) if isinstance(jobs, CommentedMap) else None
+        job_steps = list(job_map.get("steps")) if isinstance(job_map, CommentedMap) and isinstance(job_map.get("steps"), list) else None
+
+        for step in job_node.steps:
+            run_exprs = step.run_command.expression_sites if step.run_command is not None else []
+            for expr in run_exprs:
+                expr_meta = wrapper.get(ExpressionProvider, expr)
+                stable_id = expr_meta.stable_id if expr_meta else None
+                if not stable_id or stable_id not in analysis.expression_classifications:
+                    continue
+
+                classif = analysis.expression_classifications[stable_id]
+                
+                if classif.decision == AnalysisDecision.REMEDIATE:
+                    action = "PATCHED"
+                    reason = None
+                    env_var_added = remediated_names.get(stable_id)
+                elif classif.decision == AnalysisDecision.BAILOUT:
+                    action = "BAILED"
+                    reason = classif.bailout_reason.value if hasattr(classif.bailout_reason, "value") else str(classif.bailout_reason)
+                    if reason == "BLOCK_SCALAR":
+                        action = "SKIPPED"
+                        reason = "BLOCK_SCALAR_OUT_OF_SCOPE"
+                    env_var_added = None
+                elif classif.decision == AnalysisDecision.SKIP:
+                    action = "SKIPPED"
+                    reason = classif.bailout_reason.value if hasattr(classif.bailout_reason, "value") else str(classif.bailout_reason)
+                    if reason == "NONE" or not reason:
+                        reason = "SINGLE_QUOTED_EXPRESSION"
+                    env_var_added = None
+                else: # SAFE
+                    action = "SKIPPED"
+                    reason = "TRUSTED" if classif.trust_level.value == "TRUSTED" else "AMBIGUOUS_EXPRESSION"
+                    env_var_added = None
+
+                if classif.trust_level.value == "TRUSTED":
+                    class_label = "TRUSTED"
+                elif classif.trust_level.value in ("UNTRUSTED", "MIXED"):
+                    class_label = "UNTRUSTED"
+                else:
+                    class_label = "AMBIGUOUS"
+
+                style = step.run_command.command.style if step.run_command else "PLAIN"
+                scalar_type = "block" if style in ("LITERAL", "FOLDED") else "plain"
+
+                report_entries.append({
+                    "file": _report_file_path(file_path),
+                    "job_id": job_id,
+                    "step": step.step_index,
+                    "step_id": step.step_id,
+                    "action": action,
+                    "reason": reason,
+                    "env_var_added": env_var_added,
+                    "expression_text": expr.expression_text,
+                    "classification": class_label,
+                    "scalar_type": scalar_type,
+                    "start_offset": expr.start_offset,
+                    "end_offset": expr.end_offset,
+                })
+
+    return output_text, report_entries
 
 
 def _report_file_path(file_path: Path) -> str:

@@ -7,10 +7,15 @@ string while preserving untouched lines and the original line-ending convention.
 MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
 """
 
-from __future__ import annotations
+import warnings
+
+warnings.warn(
+    "Module cst_auto_remediator.mutate is deprecated and will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from io import StringIO
-
 from ruamel.yaml.comments import CommentedMap
 from ruamel.yaml.scalarstring import (
     DoubleQuotedScalarString,

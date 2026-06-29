@@ -66,12 +66,12 @@ def remediate_file(
     path: str | Path,
     *,
     write_back: bool = False,
-) -> tuple[str | None, list[dict]]:
+    return_context: bool = False,
+) -> Any:
     """
     Run Stages 1–7 on a workflow file.
 
-    Returns ``(yaml_output, report)`` where *yaml_output* is ``None`` on
-    Stage 1 ingest failure, and *report* is a list of JSON-serializable dicts.
+    Returns ``(yaml_output, report)`` or ``(yaml_output, report, context)`` based on return_context.
     """
     file_path = Path(path)
     ingest_result = ingest(file_path)
@@ -334,6 +334,28 @@ def remediate_file(
                     "start_offset": expr.start_offset,
                     "end_offset": expr.end_offset,
                 })
+
+    if return_context:
+        try:
+            rem_doc, rem_meta = parse_yaml(output_text.encode("utf-8"))
+            rem_cst = build_cst(rem_doc, rem_meta)
+            rem_semantic = build_semantic_model(rem_cst)
+        except Exception:
+            rem_doc = document
+            rem_semantic = None
+
+        from cst_auto_remediator.gha_verify.report import VerificationContext
+        context = VerificationContext(
+            original_yaml=original_text,
+            remediated_yaml=output_text,
+            original_cst=cst,
+            remediated_cst=transform_res.cst,
+            original_ruamel=document,
+            remediated_ruamel=rem_doc,
+            original_semantic=semantic,
+            remediated_semantic=rem_semantic,
+        )
+        return output_text, report_entries, context
 
     return output_text, report_entries
 

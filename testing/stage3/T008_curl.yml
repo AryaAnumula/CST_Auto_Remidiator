@@ -1,0 +1,13 @@
+name: T008 Curl URL
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Request
+        run: curl "https://example.com?q=${{ github.event.issue.title }}"

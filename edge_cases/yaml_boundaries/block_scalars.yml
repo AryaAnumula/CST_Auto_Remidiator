@@ -1,0 +1,14 @@
+# Description: Workflow using literal and folded block scalars.
+# Expected Compiler Behaviour: Parses, but bails out during analysis due to unsupported block style.
+# Stop Stage: Stage 5 (Security Analysis)
+# Expected Diagnostics: ANA003 (Unsupported block scalar format)
+# Expected Analysis Decision: BAILOUT
+name: Block Scalars Test
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Folded Run
+        run: >
+          echo ${{ github.event.issue.title }}

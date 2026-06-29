@@ -1,0 +1,13 @@
+# Description: Step run contains multiple adjacent and nested expressions.
+# Expected Compiler Behaviour: Scanner extracts all expressions correctly.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Nested Adjacent Test
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run
+        run: echo ${{ github.sha }} and ${{ github.repository }}

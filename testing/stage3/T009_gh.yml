@@ -1,0 +1,13 @@
+name: T009 GitHub CLI
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Comment on Issue
+        run: gh issue comment --body "${{ github.event.comment.body }}"

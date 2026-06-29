@@ -1,0 +1,14 @@
+--- C:\CST\testing\inputs\partial_env_run_only.yml
+
++++ C:\CST\testing\output\partial_env_run_only.output.yml
+
+@@ -13,7 +13,7 @@
+
+       - name: Half-fixed notifier
+         env:
+           PR_TITLE: ${{ github.event.issue.title }}
+-        run: 'echo "Issue: ${{ github.event.issue.title }}"'
++        run: 'echo "Issue: $PR_TITLE"'
+ 
+       - name: Fully fixed notifier
+         env:

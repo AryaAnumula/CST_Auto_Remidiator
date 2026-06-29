@@ -1,0 +1,16 @@
+--- C:\CST\testing\inputs\multi_step_mixed.yml
+
++++ C:\CST\testing\output\multi_step_mixed.output.yml
+
+@@ -15,7 +15,9 @@
+
+         run: 'echo "PR title: $PR_TITLE"'
+ 
+       - name: Vulnerable comment body
+-        run: 'echo "Body says: ${{ github.event.pull_request.body }}"'
++        env:
++          PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
++        run: 'echo "Body says: $PULL_REQUEST_BODY"'
+ 
+       - name: Block scalar audit only
+         run: |

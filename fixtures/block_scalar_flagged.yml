@@ -1,0 +1,9 @@
+name: block scalar flagged
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block scalar run
+        run: |
+          echo "Issue title is: ${{ github.event.issue.title }}"

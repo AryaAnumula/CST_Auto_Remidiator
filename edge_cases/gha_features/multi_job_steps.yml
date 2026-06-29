@@ -1,0 +1,18 @@
+# Description: Workflow with multiple jobs and steps.
+# Expected Compiler Behaviour: Successful parse and semantic tree reconstruction.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Multi Job Steps Test
+on: push
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Job 1 Step
+        run: echo "job1"
+  job2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Job 2 Step
+        run: echo "job2"

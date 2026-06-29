@@ -1,0 +1,19 @@
+# Description: Workflow with workflow, job, and step-level environment variables.
+# Expected Compiler Behaviour: Scope metadata correctly resolves environment maps.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Env Scopes Test
+on: push
+env:
+  GLOBAL_VAL: global
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JOB_VAL: job
+    steps:
+      - name: Step 1
+        env:
+          STEP_VAL: step
+        run: echo "env test"

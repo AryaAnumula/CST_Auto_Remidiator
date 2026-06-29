@@ -1,0 +1,19 @@
+# Description: Workflow with matrix strategy configurations and default shell properties.
+# Expected Compiler Behaviour: Successfully resolved matrix configurations and defaults.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: Matrix Defaults Test
+on: push
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [16, 18, 20]
+    steps:
+      - name: Use Version
+        run: echo "using matrix version"

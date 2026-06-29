@@ -1,0 +1,12 @@
+name: T001 Canonical Echo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Echo Issue Title
+        run: echo "${{ github.event.issue.title }}"

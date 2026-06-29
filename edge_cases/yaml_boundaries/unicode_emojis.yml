@@ -1,0 +1,13 @@
+# Description: Workflow containing UTF-8 characters and emojis in keys/values.
+# Expected Compiler Behaviour: Successful parse and analysis. Range offsets must map characters correctly.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SAFE
+name: UTF-8 Test 🌟
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hello Unicode 🚀
+        run: echo "Hello World"

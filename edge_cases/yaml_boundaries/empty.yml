@@ -1,0 +1,5 @@
+# Description: Empty YAML document testing parser boundaries.
+# Expected Compiler Behaviour: Raise ParsingError on empty stream.
+# Stop Stage: Stage 1 (Ingest)
+# Expected Diagnostics: None (fails at raw parse)
+# Expected Analysis Decision: None

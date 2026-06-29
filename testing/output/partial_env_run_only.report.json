@@ -1,0 +1,30 @@
+[
+  {
+    "file": "testing/inputs/partial_env_run_only.yml",
+    "job_id": "notify",
+    "step": 1,
+    "step_id": null,
+    "action": "SKIPPED",
+    "reason": "ALREADY_REMEDIATED",
+    "env_var_added": null,
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 0,
+    "end_offset": 31
+  },
+  {
+    "file": "testing/inputs/partial_env_run_only.yml",
+    "job_id": "notify",
+    "step": 0,
+    "step_id": null,
+    "action": "PATCHED",
+    "reason": null,
+    "env_var_added": "PR_TITLE",
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 13,
+    "end_offset": 44
+  }
+]

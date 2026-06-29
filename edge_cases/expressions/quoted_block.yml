@@ -1,0 +1,13 @@
+# Description: Expression evaluated inside single quotes.
+# Expected Compiler Behaviour: Scans correctly, but single quoting prevents shell execution expansion. Skipped during analysis.
+# Stop Stage: None
+# Expected Diagnostics: None
+# Expected Analysis Decision: SKIP
+name: Quoted Expression Test
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Single Quoted Run
+        run: echo '${{ github.event.issue.title }}'

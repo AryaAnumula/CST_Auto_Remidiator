@@ -1,0 +1,10 @@
+name: bail collision
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Env name collision
+        env:
+          ISSUE_TITLE: "already"
+        run: 'echo "Issue title is: ${{ github.event.issue.title }}"'

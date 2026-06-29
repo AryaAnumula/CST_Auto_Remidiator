@@ -1,0 +1,13 @@
+# Description: Classic Command Injection vulnerable workflow pattern.
+# Expected Compiler Behaviour: Successfully flags the untrusted context reaching execution sink.
+# Stop Stage: None
+# Expected Diagnostics: ANA004 (Unsafe expression reaches shell command execution sink)
+# Expected Analysis Decision: REMEDIATE
+name: Command Injection Vulnerability
+on: pull_request
+jobs:
+  exploit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Direct injection sink
+        run: echo "User payload: ${{ github.event.issue.title }}"

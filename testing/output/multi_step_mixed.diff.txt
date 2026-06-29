@@ -1,6 +1,6 @@
---- C:\CST\testing\inputs\multi_step_mixed.yml
+--- D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\inputs\multi_step_mixed.yml
 
-+++ C:\CST\testing\output\multi_step_mixed.output.yml
++++ D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\output\multi_step_mixed.output.yml
 
 @@ -15,7 +15,9 @@
 

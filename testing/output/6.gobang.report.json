@@ -1,0 +1,58 @@
+[
+  {
+    "file": "D:/Cybersec/internship/Real Files/6.gobang.yml",
+    "job_id": "Play-Gobang",
+    "step": 0,
+    "step_id": null,
+    "action": "PATCHED",
+    "reason": null,
+    "env_var_added": "ISSUE_TITLE",
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 17,
+    "end_offset": 48
+  },
+  {
+    "file": "D:/Cybersec/internship/Real Files/6.gobang.yml",
+    "job_id": "Play-Gobang",
+    "step": 4,
+    "step_id": null,
+    "action": "PATCHED",
+    "reason": null,
+    "env_var_added": "ISSUE_TITLE",
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "plain",
+    "start_offset": 18,
+    "end_offset": 49
+  },
+  {
+    "file": "D:/Cybersec/internship/Real Files/6.gobang.yml",
+    "job_id": "Play-Gobang",
+    "step": 5,
+    "step_id": null,
+    "action": "SKIPPED",
+    "reason": "BLOCK_SCALAR_OUT_OF_SCOPE",
+    "env_var_added": null,
+    "expression_text": "${{ github.actor }}",
+    "classification": "AMBIGUOUS",
+    "scalar_type": "block",
+    "start_offset": 135,
+    "end_offset": 154
+  },
+  {
+    "file": "D:/Cybersec/internship/Real Files/6.gobang.yml",
+    "job_id": "Play-Gobang",
+    "step": 5,
+    "step_id": null,
+    "action": "SKIPPED",
+    "reason": "BLOCK_SCALAR_OUT_OF_SCOPE",
+    "env_var_added": null,
+    "expression_text": "${{ github.event.issue.title }}",
+    "classification": "UNTRUSTED",
+    "scalar_type": "block",
+    "start_offset": 160,
+    "end_offset": 191
+  }
+]

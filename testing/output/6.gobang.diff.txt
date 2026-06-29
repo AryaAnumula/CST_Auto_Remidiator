@@ -1,0 +1,59 @@
+--- D:\Cybersec\internship\Real Files\6.gobang.yml
+
++++ testing\output\6.gobang.output.yml
+
+@@ -8,26 +8,30 @@
+
+     if: startsWith(github.event.issue.title, 'Put-')
+     runs-on: ubuntu-latest
+     steps:
+-      - run: echo "issue-name=${{ github.event.issue.title }}"
+-      - name: Check out repository code
+-        uses: actions/checkout@v2
+-      - name: Install Python3
+-        uses: actions/setup-python@v2
+-        with:
+-          python-version: '3.8'
+-      - name: Install packages
+-        run: pip install tabulate numpy
+-      - name: Update README
+-        run: python update.py "${{ github.event.issue.title }}"
+-      - name: Commit
+-        run: |
+-          git config --global user.name 'Github Action Bot'
+-          git config --global user.email 'checkdeng.bot@gmail.com'
+-          git add -u .
+-          git commit -m '${{ github.actor }} took ${{ github.event.issue.title }}'
+-          git push origin || echo "No changes to commit"
+-      - name: Close Issue
+-        uses: peter-evans/close-issue@v1
+-        with:
+-          issue-number: ${{ github.event.issue.number }}
+-          comment: Auto-closing issue
++    - env:
++        ISSUE_TITLE: ${{ github.event.issue.title }}
++      run: echo "issue-name=$ISSUE_TITLE"
++    - name: Check out repository code
++      uses: actions/checkout@v2
++    - name: Install Python3
++      uses: actions/setup-python@v2
++      with:
++        python-version: '3.8'
++    - name: Install packages
++      run: pip install tabulate numpy
++    - name: Update README
++      env:
++        ISSUE_TITLE: ${{ github.event.issue.title }}
++      run: python update.py "$ISSUE_TITLE"
++    - name: Commit
++      run: |
++        git config --global user.name 'Github Action Bot'
++        git config --global user.email 'checkdeng.bot@gmail.com'
++        git add -u .
++        git commit -m '${{ github.actor }} took ${{ github.event.issue.title }}'
++        git push origin || echo "No changes to commit"
++    - name: Close Issue
++      uses: peter-evans/close-issue@v1
++      with:
++        issue-number: ${{ github.event.issue.number }}
++        comment: Auto-closing issue

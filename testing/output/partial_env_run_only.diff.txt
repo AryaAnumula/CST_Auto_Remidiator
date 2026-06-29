@@ -1,6 +1,6 @@
---- D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\inputs\partial_env_run_only.yml
+--- C:\CST\testing\inputs\partial_env_run_only.yml
 
-+++ D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\output\partial_env_run_only.output.yml
++++ C:\CST\testing\output\partial_env_run_only.output.yml
 
 @@ -13,7 +13,7 @@
 

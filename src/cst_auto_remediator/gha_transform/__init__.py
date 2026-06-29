@@ -16,6 +16,7 @@ from cst_auto_remediator.gha_transform.planner import (
 )
 from cst_auto_remediator.gha_transform.rtl import apply_rtl_substitutions
 from cst_auto_remediator.gha_transform.transformer import CSTTransformer
+from cst_auto_remediator.gha_transform.serializer import serialize_document
 
 __all__ = [
     "CSTTransformer",
@@ -28,4 +29,5 @@ __all__ = [
     "TransformationResult",
     "apply_rtl_substitutions",
     "gen_safe_var_name",
+    "serialize_document",
 ]

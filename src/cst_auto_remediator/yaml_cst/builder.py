@@ -48,7 +48,9 @@ def _build_node(val: Any, span: SourceSpan | None = None) -> YamlNode:
             k_line, k_col = (None, None)
             if lc is not None:
                 try:
-                    k_line, k_col = lc.key(k)
+                    res_key = lc.key(k)
+                    if res_key is not None:
+                        k_line, k_col = res_key
                 except (KeyError, AttributeError):
                     pass
             k_span = SourceSpan(k_line, k_col) if k_line is not None else None
@@ -57,8 +59,10 @@ def _build_node(val: Any, span: SourceSpan | None = None) -> YamlNode:
             val_span = None
             if lc is not None:
                 try:
-                    v_line, v_col = lc.value(k)
-                    val_span = SourceSpan(v_line, v_col)
+                    res_val = lc.value(k)
+                    if res_val is not None:
+                        v_line, v_col = res_val
+                        val_span = SourceSpan(v_line, v_col)
                 except (KeyError, AttributeError):
                     pass
             if val_span is None and isinstance(v, (CommentedMap, CommentedSeq)):

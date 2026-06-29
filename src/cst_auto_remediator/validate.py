@@ -7,10 +7,15 @@ Does not mutate files — see mutate.py.
 MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
 """
 
-from __future__ import annotations
+import warnings
+
+warnings.warn(
+    "Module cst_auto_remediator.validate is deprecated and will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import re
-
 from ruamel.yaml.comments import CommentedMap
 
 from cst_auto_remediator.models import (

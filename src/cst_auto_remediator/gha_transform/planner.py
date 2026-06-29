@@ -91,19 +91,48 @@ class MutationPlanner:
                 )
                 builders[id(step)] = builder
 
-            env_var_name = gen_safe_var_name(
-                expr.expression_text,
-                classification.scope,
-                reserved_names=builder.reserved_names,
-            )
-            builder.reserved_names.add(env_var_name)
-            builder.env_entries.append(
-                EnvVarEntry(
-                    expression_id=stable_id,
-                    name=env_var_name,
-                    expression_text=expr.expression_text,
+            # Check for overlapping spans in the same step's run command
+            overlap = False
+            for rep in builder.replacements:
+                if max(expr.start_offset, rep.start_offset) < min(expr.end_offset, rep.end_offset):
+                    overlap = True
+                    break
+
+            if overlap:
+                import warnings
+                warnings.warn(
+                    f"Skipping overlapping expression {expr.expression_text!r} "
+                    f"at span {expr.start_offset}:{expr.end_offset} in job {run_pos.job_id!r} step {run_pos.step_index}",
+                    RuntimeWarning
                 )
-            )
+                continue
+
+            # Check if there is an existing variable in the scope that binds this exact expression
+            existing_var_name = None
+            if classification.scope and classification.scope.scope_type == "step":
+                for env_name, env_val in classification.scope.env.items():
+                    val_str = env_val.value if hasattr(env_val, "value") else str(env_val)
+                    if str(val_str).strip() == expr.expression_text.strip() or str(val_str).strip() == expr.expression_body.strip():
+                        existing_var_name = env_name
+                        break
+
+            if existing_var_name is not None:
+                env_var_name = existing_var_name
+            else:
+                env_var_name = gen_safe_var_name(
+                    expr.expression_text,
+                    classification.scope,
+                    reserved_names=builder.reserved_names,
+                )
+                builder.reserved_names.add(env_var_name)
+                builder.env_entries.append(
+                    EnvVarEntry(
+                        expression_id=stable_id,
+                        name=env_var_name,
+                        expression_text=expr.expression_text,
+                    )
+                )
+
             builder.replacements.append(
                 SiteReplacement(
                     expression_id=stable_id,

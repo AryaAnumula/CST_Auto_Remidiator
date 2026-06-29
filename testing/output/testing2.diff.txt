@@ -1,6 +1,6 @@
---- D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\inputs\testing2.yml
+--- C:\CST\testing\inputs\testing2.yml
 
-+++ D:\Cybersec\internship\CST_Auto_Remidiator-cst-engine-v1\testing\output\testing2.output.yml
++++ C:\CST\testing\output\testing2.output.yml
 
 @@ -18,7 +18,9 @@
 

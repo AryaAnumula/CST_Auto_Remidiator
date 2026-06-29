@@ -382,3 +382,46 @@ def test_gen_safe_var_name_two_expressions_with_same_base_get_distinct_names() -
     assert len(parts) == 2, f"expected BASENAME_HEXHASH format, got {name_b!r}"
     assert len(parts[1]) == 8, f"expected 8-char hex suffix, got {parts[1]!r}"
 
+
+def test_overlap_detection_skips_overlapping_spans() -> None:
+    """
+    Verify that if two expressions overlap in their character span range, the planner
+    gracefully skips the second one with a RuntimeWarning.
+    """
+    from dataclasses import replace as _replace
+
+    content = (
+        b"jobs:\n"
+        b"  build:\n"
+        b"    steps:\n"
+        b"      - run: echo ${{ github.event.issue.title }}\n"
+    )
+    _, _, wrapper, analysis = _workflow_resources(content)
+
+    assert len(analysis.expression_classifications) == 1
+    key, classif = next(iter(analysis.expression_classifications.items()))
+
+    # Build a fake classification with overlapping ranges
+    expr_a = classif.expression_site
+    expr_b = _replace(expr_a, start_offset=expr_a.start_offset, end_offset=expr_a.start_offset + 5)
+    classif_b = _replace(classif, expression_site=expr_b)
+
+    # populate position metadata cache for the fake expression
+    from cst_auto_remediator.gha_metadata.providers import PositionProvider
+    pos_data = wrapper.get_metadata(PositionProvider)
+    pos_data[id(expr_b)] = pos_data[id(expr_a)]
+
+    fake_classifications = {
+        "stable_a": classif,
+        "stable_b": classif_b
+    }
+    fake_analysis = _replace(analysis, expression_classifications=fake_classifications)
+
+    # Building plan should trigger warning and only plan 1 replacement
+    with pytest.warns(RuntimeWarning, match="Skipping overlapping expression"):
+        plan = MutationPlanner(wrapper).build_plan(fake_analysis)
+
+    assert len(plan.step_mutations) == 1
+    assert len(plan.step_mutations[0].replacements) == 1
+
+

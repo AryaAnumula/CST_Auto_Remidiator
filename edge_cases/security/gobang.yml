@@ -1,0 +1,33 @@
+name: Gobang
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  Play-Gobang:
+    if: startsWith(github.event.issue.title, 'Put-')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "issue-name=${{ github.event.issue.title }}"
+      - name: Check out repository code
+        uses: actions/checkout@v2
+      - name: Install Python3
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name: Install packages
+        run: pip install tabulate numpy
+      - name: Update README
+        run: python update.py "${{ github.event.issue.title }}"
+      - name: Commit
+        run: |
+          git config --global user.name 'Github Action Bot'
+          git config --global user.email 'checkdeng.bot@gmail.com'
+          git add -u .
+          git commit -m '${{ github.actor }} took ${{ github.event.issue.title }}'
+          git push origin || echo "No changes to commit"
+      - name: Close Issue
+        uses: peter-evans/close-issue@v1
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment: Auto-closing issue

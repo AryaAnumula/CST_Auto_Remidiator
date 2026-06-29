@@ -50,7 +50,7 @@
     "reason": "BLOCK_SCALAR_OUT_OF_SCOPE",
     "env_var_added": null,
     "expression_text": "${{ github.repository }}",
-    "classification": "AMBIGUOUS",
+    "classification": "TRUSTED",
     "scalar_type": "block",
     "start_offset": 14,
     "end_offset": 38
@@ -78,7 +78,7 @@
     "reason": "BLOCK_SCALAR_OUT_OF_SCOPE",
     "env_var_added": null,
     "expression_text": "${{ github.repository }}",
-    "classification": "AMBIGUOUS",
+    "classification": "TRUSTED",
     "scalar_type": "block",
     "start_offset": 223,
     "end_offset": 247

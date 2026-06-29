@@ -8,7 +8,13 @@ of already-remediated workflows.
 MAINTAINER NOTE: When you change this file, update explanation.md at the project root.
 """
 
-from __future__ import annotations
+import warnings
+
+warnings.warn(
+    "Module cst_auto_remediator.traverse is deprecated and will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.scalarstring import FoldedScalarString, LiteralScalarString

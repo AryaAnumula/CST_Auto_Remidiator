@@ -1,0 +1,145 @@
+name: Synthetic Unsafe Interpolation Benchmark
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, edited, synchronize]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      custom_message:
+        required: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      ####################################################################
+      # ISSUE TITLE
+      ####################################################################
+
+      - name: Echo issue title
+        run: echo "${{ github.event.issue.title }}"
+
+      - name: Print issue title
+        run: printf '%s\n' "${{ github.event.issue.title }}"
+
+      - name: Grep issue title
+        run: printf '%s\n' "${{ github.event.issue.title }}" | grep "bug"
+
+      - name: Sed issue title
+        run: printf '%s\n' "${{ github.event.issue.title }}" | sed 's/BUG/bug/g'
+
+      - name: Python issue title
+        run: python process.py "${{ github.event.issue.title }}"
+
+      ####################################################################
+      # ISSUE BODY
+      ####################################################################
+
+      - name: Echo issue body
+        run: echo "${{ github.event.issue.body }}"
+
+      - name: Save issue body
+        run: printf '%s\n' "${{ github.event.issue.body }}" > issue.txt
+
+      ####################################################################
+      # COMMENT BODY
+      ####################################################################
+
+      - name: Echo comment
+        run: echo "${{ github.event.comment.body }}"
+
+      - name: Comment lint
+        run: printf '%s\n' "${{ github.event.comment.body }}" | grep TODO
+
+      ####################################################################
+      # PR TITLE
+      ####################################################################
+
+      - name: Commitlint
+        run: printf '%s\n' "${{ github.event.pull_request.title }}" | npx commitlint
+
+      - name: Echo PR title
+        run: echo "${{ github.event.pull_request.title }}"
+
+      - name: Python PR title
+        run: python update.py "${{ github.event.pull_request.title }}"
+
+      ####################################################################
+      # PR BODY
+      ####################################################################
+
+      - name: Echo PR body
+        run: echo "${{ github.event.pull_request.body }}"
+
+      - name: Save PR body
+        run: printf '%s\n' "${{ github.event.pull_request.body }}" > pr_body.txt
+
+      ####################################################################
+      # REVIEW BODY
+      ####################################################################
+
+      - name: Review body
+        run: echo "${{ github.event.review.body }}"
+
+      ####################################################################
+      # REVIEW COMMENT
+      ####################################################################
+
+      - name: Review comment
+        run: printf '%s\n' "${{ github.event.review_comment.body }}"
+
+      ####################################################################
+      # HEAD COMMIT MESSAGE
+      ####################################################################
+
+      - name: Commit message
+        run: echo "${{ github.event.head_commit.message }}"
+
+      ####################################################################
+      # WORKFLOW INPUT
+      ####################################################################
+
+      - name: Dispatch input
+        run: printf '%s\n' "${{ github.event.inputs.custom_message }}"
+
+      ####################################################################
+      # MULTIPLE EXPRESSIONS
+      ####################################################################
+
+      - name: Mixed
+        run: echo "${{ github.actor }} opened ${{ github.event.issue.title }}"
+
+      - name: Combined printf
+        run: printf '%s %s\n' "${{ github.actor }}" "${{ github.event.pull_request.title }}"
+
+      ####################################################################
+      # PIPELINES
+      ####################################################################
+
+      - name: Pipeline
+        run: printf '%s\n' "${{ github.event.pull_request.title }}" | tr '[:upper:]' '[:lower:]'
+
+      - name: Double pipeline
+        run: printf '%s\n' "${{ github.event.issue.title }}" | sed 's/ /-/g' | grep bug
+
+      ####################################################################
+      # REDIRECTION
+      ####################################################################
+
+      - name: Redirect
+        run: echo "${{ github.event.issue.title }}" > title.txt
+
+      - name: Append
+        run: echo "${{ github.event.comment.body }}" >> comments.txt

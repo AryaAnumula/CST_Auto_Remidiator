@@ -48,21 +48,11 @@ def run_stages_1_to_7(yaml_str: str) -> str:
 def get_mutated_paths(context: VerificationContext) -> set[tuple[str, ...]]:
     """Determine the hierarchical paths of mutated steps from the planner."""
     mutated = set()
-    orig_sem = context.original_semantic or build_semantic_model(context.original_cst)
-    rem_sem = context.remediated_semantic or build_semantic_model(context.remediated_cst)
-
-    if orig_sem.workflow and rem_sem.workflow:
-        for job_id, oj in orig_sem.workflow.jobs.items():
-            rj = rem_sem.workflow.jobs.get(job_id)
-            if not rj:
-                continue
-            for idx, (os, rs) in enumerate(zip(oj.steps, rj.steps)):
-                from cst_auto_remediator.gha_verify.passes.semantic_pass import to_primitive, find_entry_value
-                run_orig = to_primitive(find_entry_value(os.node, "run"))
-                run_rem = to_primitive(find_entry_value(rs.node, "run"))
-                if run_orig != run_rem:
-                    mutated.add(("jobs", job_id, "steps", str(idx), "run"))
-                    mutated.add(("jobs", job_id, "steps", str(idx), "env"))
+    from cst_auto_remediator.gha_verify.utils import get_mutated_step_indices
+    mutated_indices = get_mutated_step_indices(context)
+    for job_id, idx in mutated_indices:
+        mutated.add(("jobs", job_id, "steps", str(idx), "run"))
+        mutated.add(("jobs", job_id, "steps", str(idx), "env"))
     return mutated
 
 
@@ -184,17 +174,8 @@ class InvariantPass:
         byte_preservation_failures = []
         byte_preservation_failures = []
         if orig_wf and rem_wf and orig_wrapper and rem_wrapper:
-            mutated_steps = set()
-            for job_id, oj in orig_wf.jobs.items():
-                rj = rem_wf.jobs.get(job_id)
-                if not rj:
-                    continue
-                for idx, (os, rs) in enumerate(zip(oj.steps, rj.steps)):
-                    from cst_auto_remediator.gha_verify.passes.semantic_pass import to_primitive, find_entry_value
-                    run_orig = to_primitive(find_entry_value(os.node, "run"))
-                    run_rem = to_primitive(find_entry_value(rs.node, "run"))
-                    if run_orig != run_rem:
-                        mutated_steps.add((job_id, idx))
+            from cst_auto_remediator.gha_verify.utils import get_mutated_step_indices
+            mutated_steps = get_mutated_step_indices(context)
 
             for job_id, oj in orig_wf.jobs.items():
                 rj = rem_wf.jobs.get(job_id)

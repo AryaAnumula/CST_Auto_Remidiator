@@ -68,19 +68,10 @@ class SecurityPass:
         # Determine mutated paths to filter out bailed steps
         def get_mutated_paths(ctx: VerificationContext) -> set[tuple[str, ...]]:
             mutated = set()
-            from cst_auto_remediator.gha_verify.passes.semantic_pass import to_primitive, find_entry_value
-            orig_sem = ctx.original_semantic or build_semantic_model(ctx.original_cst)
-            rem_sem = ctx.remediated_semantic or build_semantic_model(ctx.remediated_cst)
-            if orig_sem.workflow and rem_sem.workflow:
-                for j_id, oj in orig_sem.workflow.jobs.items():
-                    rj = rem_sem.workflow.jobs.get(j_id)
-                    if not rj:
-                        continue
-                    for s_idx, (os, rs) in enumerate(zip(oj.steps, rj.steps)):
-                        run_orig = to_primitive(find_entry_value(os.node, "run"))
-                        run_rem = to_primitive(find_entry_value(rs.node, "run"))
-                        if run_orig != run_rem:
-                            mutated.add(("jobs", j_id, "steps", str(s_idx)))
+            from cst_auto_remediator.gha_verify.utils import get_mutated_step_indices
+            mutated_indices = get_mutated_step_indices(ctx)
+            for job_id, idx in mutated_indices:
+                mutated.add(("jobs", job_id, "steps", str(idx)))
             return mutated
 
         mutated_paths = get_mutated_paths(context)

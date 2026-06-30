@@ -5,7 +5,7 @@ Stage 8 orchestrator for verification and certification.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from cst_auto_remediator.gha_verify.report import (
@@ -101,5 +101,5 @@ def verify_output(context: VerificationContext) -> VerificationReport:
         summary=summary,
         compiler_version="1.0.0",
         verifier_version="1.0.0",
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
